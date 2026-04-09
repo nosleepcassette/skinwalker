@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "smux": {
+      "source": "ShawnPana/smux",
+      "sourceType": "github",
+      "computedHash": "cc6cfffb9f793c89a46f0f97bb9d20cd84ca5e170c6fd538066e7953cb69c10d"
+    }
+  }
+}
