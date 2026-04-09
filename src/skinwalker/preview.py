@@ -4,7 +4,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
-from .model import COLOR_KEYS, normalize_color_token
+from .model import COLOR_KEYS, TOOL_EMOJI_KEYS, normalize_color_token
 
 
 def _render_markup_block(markup: str, fallback_style: str = "") -> Text:
@@ -43,8 +43,10 @@ def render_skin_preview(skin: dict):
 
     response_label = str(branding.get("response_label", " Hermes ")).strip() or "Hermes"
     prompt_symbol = str(branding.get("prompt_symbol", "› ") or "› ")
+    help_header = str(branding.get("help_header", "Activity")).strip() or "Activity"
     agent_name = str(branding.get("agent_name", "") or "Hermes Agent")
     welcome = str(branding.get("welcome", "") or "Ready when you are.")
+    goodbye = str(branding.get("goodbye", "") or "Session complete.")
 
     banner_body = Group(
         Text("Session interactive CLI", style=accent),
@@ -54,28 +56,48 @@ def render_skin_preview(skin: dict):
         hero,
     )
 
-    waiting_line = Text.assemble(
-        (f"{tool_prefix} ", ui_label),
-        (f"{wing_left} ", ui_accent),
-        (f"{waiting_faces[0]} ", prompt_color),
-        (f"{wing_right} ", ui_accent),
-        ("warming the line", text_color),
-    )
+    waiting_lines = []
+    for index, face in enumerate(waiting_faces[: min(3, len(waiting_faces))]):
+        sample_left, sample_right = wings[index % len(wings)] if wings else ("", "")
+        waiting_lines.append(
+            Text.assemble(
+                (f"{tool_prefix} ", ui_label),
+                (f"{sample_left} ", ui_accent),
+                (f"{face} ", prompt_color),
+                (f"{sample_right} ", ui_accent),
+                (f"warming the line {index + 1}", text_color),
+            )
+        )
 
-    thinking_line = Text.assemble(
-        (f"{tool_prefix} ", ui_label),
-        (f"{wing_left} ", ui_accent),
-        (f"{thinking_faces[0]} ", prompt_color),
-        (f"{wing_right} ", ui_accent),
-        (thinking_verbs[0], text_color),
-    )
+    thinking_lines = []
+    for index, face in enumerate(thinking_faces[: min(3, len(thinking_faces))]):
+        sample_left, sample_right = wings[index % len(wings)] if wings else ("", "")
+        verb = thinking_verbs[index % len(thinking_verbs)] if thinking_verbs else "thinking"
+        thinking_lines.append(
+            Text.assemble(
+                (f"{tool_prefix} ", ui_label),
+                (f"{sample_left} ", ui_accent),
+                (f"{face} ", prompt_color),
+                (f"{sample_right} ", ui_accent),
+                (verb, text_color),
+            )
+        )
 
     tool_lines = []
-    for tool_name, fallback_emoji, preview in [
-        ("terminal", "⚡", "ls ~/.hermes/skins"),
-        ("web_search", "🔎", "look up palette ergonomics"),
-        ("read_file", "📄", "~/.hermes/skins/cass-ascii.yaml"),
-    ]:
+    tool_samples = {
+        "terminal": ("⚡", "ls ~/.hermes/skins"),
+        "web_search": ("🔎", "search for skin ergonomics"),
+        "web_extract": ("🌐", "extract page sections"),
+        "browser_navigate": ("🧭", "open preview target"),
+        "browser_click": ("🖱", "click apply button"),
+        "read_file": ("📄", "~/.hermes/skins/cass-ascii.yaml"),
+        "write_file": ("✎", "~/.hermes/skins/new-skin.yaml"),
+        "patch": ("🩹", "patch spinner presets"),
+        "todo": ("📝", "review remaining polish"),
+        "delegate_task": ("🔀", "hand off hero variations"),
+    }
+    for tool_name in TOOL_EMOJI_KEYS:
+        fallback_emoji, preview = tool_samples.get(tool_name, ("•", tool_name.replace("_", " ")))
         tool_lines.append(
             Text.assemble(
                 (f"{tool_prefix} ", ui_label),
@@ -97,12 +119,15 @@ def render_skin_preview(skin: dict):
             border_style=border,
         ),
         Panel(
-            Group(waiting_line, thinking_line, *tool_lines),
-            title="Activity",
+            Group(*waiting_lines, *thinking_lines, *tool_lines),
+            title=help_header,
             border_style=ui_accent,
         ),
         Panel(
-            Text("Skins now save directly into your Hermes folder.", style=text_color),
+            Group(
+                Text("Skins now save directly into your Hermes folder.", style=text_color),
+                Text(goodbye, style=dim),
+            ),
             title=response_label,
             border_style=response_border,
         ),

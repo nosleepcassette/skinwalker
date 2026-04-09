@@ -4,11 +4,20 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageFilter, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pyfiglet import Figlet, FigletFont
 from rich.markup import escape
 
 from .model import FIGLET_STYLE_MAP
+
+
+@dataclass(frozen=True)
+class LogoResult:
+    plain: str
+    markup: str
+    font: str
+    width: int
+    height: int
 
 
 @dataclass(frozen=True)
@@ -24,6 +33,8 @@ HERO_STYLE_MAP = {
     "ascii": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
     "blocks": {"renderer": "ramp", "chars": " ░▒▓█"},
     "dots": {"renderer": "ramp", "chars": " .·•●"},
+    "minimal": {"renderer": "ramp", "chars": " .:-=+*#%@"},
+    "dense": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
 }
 
 BRAILLE_BIT_GRID = [
@@ -145,7 +156,7 @@ def resolve_logo_font(style: str) -> str:
     raise ValueError(f"Unknown figlet style: {style}")
 
 
-def generate_logo_markup(
+def generate_logo_result(
     title: str,
     style: str,
     color: str,
@@ -153,7 +164,7 @@ def generate_logo_markup(
     width: int = 120,
     justify: str = "left",
     fit: str = "flexible",
-) -> str:
+) -> LogoResult:
     title = title.strip()
     if not title:
         raise ValueError("Enter a title before generating logo art")
@@ -164,8 +175,28 @@ def generate_logo_markup(
         figlet = Figlet(font=font_name, width=width)
     except Exception as exc:
         raise ValueError(f"Unknown figlet style: {style}") from exc
+
     plain = _format_generated_block(figlet.renderText(title), justify=justify, fit=fit, width=width)
-    return build_rich_block(plain, color, bold=True)
+    height = len(plain.splitlines()) if plain else 0
+    return LogoResult(
+        plain=plain,
+        markup=build_rich_block(plain, color, bold=True),
+        font=font_name,
+        width=max((len(line) for line in plain.splitlines()), default=0),
+        height=height,
+    )
+
+
+def generate_logo_markup(
+    title: str,
+    style: str,
+    color: str,
+    *,
+    width: int = 120,
+    justify: str = "left",
+    fit: str = "flexible",
+) -> str:
+    return generate_logo_result(title, style, color, width=width, justify=justify, fit=fit).markup
 
 
 def import_art_text(text: str, color: str, *, mode: str = "plain", bold: bool = False, dim: bool = False) -> str:
@@ -192,14 +223,51 @@ def _load_image(image_path: str | Path) -> Image.Image:
     path = Path(image_path).expanduser()
     if not path.exists():
         raise FileNotFoundError(f"Image not found: {path}")
-    image = Image.open(path).convert("L")
-    image = ImageOps.autocontrast(image)
-    image = image.filter(ImageFilter.SHARPEN)
+    image = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
     return image
 
 
 def _clamp_width(width: int) -> int:
     return max(16, min(60, int(width)))
+
+
+def _clamp_unit(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _prepare_image(
+    image: Image.Image,
+    *,
+    brightness: float = 1.0,
+    contrast: float = 1.0,
+    invert: bool = False,
+    threshold: int | None = None,
+    sharpen: float = 1.0,
+    edge_strength: float = 0.0,
+) -> Image.Image:
+    prepared = image.copy()
+    if brightness != 1.0:
+        prepared = ImageEnhance.Brightness(prepared).enhance(max(0.1, brightness))
+    if contrast != 1.0:
+        prepared = ImageEnhance.Contrast(prepared).enhance(max(0.1, contrast))
+    if invert:
+        prepared = ImageOps.invert(prepared)
+
+    grayscale = prepared.convert("L")
+    grayscale = ImageOps.autocontrast(grayscale)
+
+    if sharpen != 1.0:
+        grayscale = ImageEnhance.Sharpness(grayscale).enhance(max(0.0, sharpen))
+
+    if edge_strength > 0.0:
+        edges = grayscale.filter(ImageFilter.FIND_EDGES)
+        grayscale = Image.blend(grayscale, edges, _clamp_unit(edge_strength))
+
+    if threshold is not None:
+        normalized_threshold = max(0, min(255, int(threshold)))
+        grayscale = grayscale.point(lambda px: 255 if px >= normalized_threshold else 0)
+
+    return grayscale
 
 
 def _char_height(image: Image.Image, width: int, aspect_factor: float) -> int:
@@ -276,12 +344,27 @@ def generate_hero_markup(
     *,
     justify: str = "left",
     fit: str = "flexible",
+    brightness: float = 1.0,
+    contrast: float = 1.0,
+    invert: bool = False,
+    threshold: int | None = None,
+    sharpen: float = 1.0,
+    edge_strength: float = 0.0,
 ) -> HeroResult:
     style_key = style.strip().lower() or "braille"
     if style_key not in HERO_STYLE_MAP:
         raise ValueError(f"Unknown hero style: {style_key}")
 
     image = _load_image(image_path)
+    image = _prepare_image(
+        image,
+        brightness=brightness,
+        contrast=contrast,
+        invert=invert,
+        threshold=threshold,
+        sharpen=sharpen,
+        edge_strength=edge_strength,
+    )
     width = _clamp_width(width)
 
     if HERO_STYLE_MAP[style_key]["renderer"] == "braille":

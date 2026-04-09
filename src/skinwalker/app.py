@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 from pathlib import Path
 from typing import Callable
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -11,22 +13,35 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static, TabPane, TabbedContent, TextArea
 from textual.widgets.option_list import Option
 
+from .ai import (
+    backend_options,
+    discover_backends,
+    generate_branding_bundle,
+    generate_hero_bundle,
+    generate_logo_bundle,
+    generate_skin_bundle,
+    generate_spinner_bundle,
+)
 from .art import (
     HERO_STYLE_MAP,
     generate_hero_markup,
-    generate_logo_markup,
+    generate_logo_result,
     import_art_file,
     import_art_text,
     list_logo_fonts,
 )
+from .fonts import FONT_CATEGORIES, filter_fonts, font_meta
 from .hermes import HermesBridge, LibraryEntry
+from .history import DraftHistory
 from .model import (
     COLOR_KEYS,
     COLOR_PRESETS,
     FIT_MODE_OPTIONS,
+    FIGLET_STYLE_MAP,
     IMPORT_MODE_OPTIONS,
     JUSTIFY_OPTIONS,
     PALETTE_IMPORT_MODE_OPTIONS,
+    SKIN_IMPORT_MODE_OPTIONS,
     SPINNER_PRESETS,
     TOOL_EMOJI_KEYS,
     blank_skin,
@@ -36,9 +51,11 @@ from .model import (
     get_color_preset,
     get_spinner_preset,
     import_color_scheme_file,
+    import_skin_yaml_file,
     merge_skin,
     normalize_color_token,
     parse_color_scheme,
+    parse_skin_yaml,
     parse_multiline_list,
     parse_wings_text,
     unique_skin_name,
@@ -75,20 +92,27 @@ TEXTAREA_TO_DRAFT = {
 }
 
 SELECT_DEFAULTS = {
+    "profile-target": "default",
+    "ai-backend": "hermes",
     "palette-name": "default",
     "palette-import-mode": "auto",
     "color-target": "banner_border",
     "spinner-preset": "default",
+    "yaml-import-mode": "replace",
     "logo-import-mode": "plain",
+    "logo-font-category": "all",
     "logo-justify": "left",
     "logo-fit": "flexible",
     "hero-style": "braille",
+    "hero-invert": "off",
     "hero-import-mode": "plain",
     "hero-justify": "left",
     "hero-fit": "flexible",
+    "hero-edge": "off",
 }
 
 INPUT_DEFAULTS = {
+    "yaml-file-path": "",
     "palette-file-path": "",
     "logo-width": "120",
     "logo-file-path": "",
@@ -96,13 +120,109 @@ INPUT_DEFAULTS = {
     "logo-font-filter": "",
     "hero-path": "",
     "hero-width": "40",
+    "hero-brightness": "100",
+    "hero-contrast": "100",
+    "hero-threshold": "",
+    "hero-sharpen": "100",
     "hero-file-path": "",
 }
 
 TEXTAREA_DEFAULTS = {
+    "ai-direction": "",
+    "ai-output": "",
+    "yaml-import": "",
     "palette-import": "",
     "logo-import": "",
     "hero-import": "",
+}
+
+TRANSIENT_SELECT_IDS = {
+    "profile-target",
+    "ai-backend",
+    "yaml-import-mode",
+    "palette-name",
+    "palette-import-mode",
+    "color-target",
+    "spinner-preset",
+    "logo-import-mode",
+    "logo-font-category",
+    "logo-justify",
+    "logo-fit",
+    "hero-style",
+    "hero-invert",
+    "hero-import-mode",
+    "hero-justify",
+    "hero-fit",
+    "hero-edge",
+}
+
+TRANSIENT_INPUT_IDS = {
+    "yaml-file-path",
+    "palette-file-path",
+    "color-tool-value",
+    "logo-title",
+    "logo-width",
+    "logo-file-path",
+    "logo-style",
+    "logo-font-filter",
+    "hero-path",
+    "hero-width",
+    "hero-brightness",
+    "hero-contrast",
+    "hero-threshold",
+    "hero-sharpen",
+    "hero-file-path",
+}
+
+TRANSIENT_TEXTAREA_IDS = {
+    "ai-direction",
+    "yaml-import",
+    "palette-import",
+    "logo-import",
+    "hero-import",
+}
+
+MODIFIED_TRANSIENT_SELECT_IDS = {
+    "profile-target",
+    "ai-backend",
+    "yaml-import-mode",
+    "palette-import-mode",
+    "logo-import-mode",
+    "logo-font-category",
+    "logo-justify",
+    "logo-fit",
+    "hero-style",
+    "hero-invert",
+    "hero-import-mode",
+    "hero-justify",
+    "hero-fit",
+    "hero-edge",
+}
+
+MODIFIED_TRANSIENT_INPUT_IDS = {
+    "yaml-file-path",
+    "palette-file-path",
+    "color-tool-value",
+    "logo-title",
+    "logo-width",
+    "logo-file-path",
+    "logo-style",
+    "logo-font-filter",
+    "hero-path",
+    "hero-width",
+    "hero-brightness",
+    "hero-contrast",
+    "hero-threshold",
+    "hero-sharpen",
+    "hero-file-path",
+}
+
+MODIFIED_TRANSIENT_TEXTAREA_IDS = {
+    "ai-direction",
+    "yaml-import",
+    "palette-import",
+    "logo-import",
+    "hero-import",
 }
 
 EMOJI_ENABLED_FIELDS = {
@@ -418,16 +538,32 @@ class SkinwalkerApp(App[None]):
         margin-bottom: 1;
     }
 
+    Input.modified, TextArea.modified, Select.modified {
+        border: solid $warning;
+    }
+
     Select {
         margin-bottom: 1;
     }
 
-    #banner-logo, #banner-hero, #yaml-view {
+    #banner-logo, #banner-hero {
         height: 12;
     }
 
-    #palette-import, #logo-import, #hero-import {
+    #yaml-view {
+        height: 10;
+    }
+
+    #yaml-import, #palette-import, #logo-import, #hero-import {
         height: 6;
+    }
+
+    #ai-direction {
+        height: 6;
+    }
+
+    #ai-output {
+        height: 10;
     }
 
     #spinner-waiting, #spinner-thinking, #spinner-verbs, #spinner-wings {
@@ -436,6 +572,18 @@ class SkinwalkerApp(App[None]):
 
     #logo-font-list, #emoji-options {
         height: 10;
+        margin-bottom: 1;
+    }
+
+    #logo-font-meta {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #logo-font-preview {
+        height: 12;
+        padding: 1;
+        border: solid $surface;
         margin-bottom: 1;
     }
 
@@ -468,6 +616,11 @@ class SkinwalkerApp(App[None]):
         Binding("f5", "generate_logo", "Logo"),
         Binding("f6", "generate_hero", "Hero"),
         Binding("f7", "refresh_library", "Refresh"),
+        Binding("ctrl+z", "undo", "Undo"),
+        Binding("ctrl+y", "redo", "Redo"),
+        Binding("ctrl+shift+a", "select_focused", "Select"),
+        Binding("ctrl+l", "clear_focused", "Clear"),
+        Binding("ctrl+shift+r", "reset_focused", "Reset"),
         Binding("ctrl+e", "pick_emoji", "Emoji"),
     ]
 
@@ -475,6 +628,7 @@ class SkinwalkerApp(App[None]):
         super().__init__()
         self.bridge = HermesBridge(hermes_root=hermes_root)
         self.default_skin = self.bridge.load_skin("default", source="builtin")
+        self.ai_backends = discover_backends() or ["hermes"]
         self.library_entries: list[LibraryEntry] = []
         self.current_source = "user"
         self.current_name = ""
@@ -483,6 +637,8 @@ class SkinwalkerApp(App[None]):
         self.dirty = False
         self._populating_form = False
         self._emoji_target_id = ""
+        self._history = DraftHistory()
+        self._restoring_history = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -500,6 +656,14 @@ class SkinwalkerApp(App[None]):
                     yield Button("Save", id="save")
                     yield Button("Save As", id="save-as")
                     yield Button("Activate", id="activate")
+                    yield Button("Undo", id="undo")
+                    yield Button("Redo", id="redo")
+                    yield Select(
+                        _select_options(self.bridge.list_profiles()),
+                        id="profile-target",
+                        allow_blank=False,
+                        value=self.bridge.current_profile_name(),
+                    )
                     yield Button("Emoji", id="pick-emoji")
                     yield Button("Logo", id="generate-logo")
                     yield Button("Hero", id="generate-hero")
@@ -508,6 +672,16 @@ class SkinwalkerApp(App[None]):
                         yield Static(id="preview")
                     with TabPane("YAML", id="yaml-tab"):
                         yield TextArea("", id="yaml-view", read_only=True)
+                        yield Static("YAML import mode", classes="field-label")
+                        yield Select(_select_options(SKIN_IMPORT_MODE_OPTIONS), id="yaml-import-mode", allow_blank=False, value="replace")
+                        yield Static("YAML file path", classes="field-label")
+                        yield Input(id="yaml-file-path", placeholder="~/Downloads/skin.yaml")
+                        with Horizontal(classes="button-row"):
+                            yield Button("Import YAML Text", id="import-yaml-text")
+                            yield Button("Import YAML File", id="import-yaml-file")
+                            yield Button("Export YAML File", id="export-yaml-file")
+                        yield Static("YAML import text", classes="field-label")
+                        yield TextArea("", id="yaml-import")
             with Vertical(id="editor-pane"):
                 with TabbedContent(id="editor-tabs", initial="identity-tab"):
                     with TabPane("Identity", id="identity-tab"):
@@ -518,6 +692,7 @@ class SkinwalkerApp(App[None]):
                             yield Static("Description", classes="field-label")
                             yield Input(id="description", placeholder="Short description")
                             with Horizontal(classes="button-row"):
+                                yield Button("Select Focused", id="select-focused", classes="tiny-button")
                                 yield Button("Clear Focused", id="clear-focused", classes="tiny-button")
                                 yield Button("Reset Focused", id="reset-focused", classes="tiny-button")
                             yield Static("Branding", classes="section-title")
@@ -596,10 +771,14 @@ class SkinwalkerApp(App[None]):
                             yield Input(id="logo-width", placeholder="120")
                             yield Static("Current font", classes="field-label")
                             yield Input(id="logo-style", placeholder="standard")
+                            yield Static("Font category", classes="field-label")
+                            yield Select(_select_options(FONT_CATEGORIES), id="logo-font-category", allow_blank=False, value="all")
                             yield Static("Font browser filter", classes="field-label")
                             yield Input(id="logo-font-filter", placeholder="standard, slant, doom")
                             yield Static("Font browser", classes="field-label")
                             yield OptionList(id="logo-font-list")
+                            yield Static("", id="logo-font-meta")
+                            yield Static("", id="logo-font-preview")
                             yield Static("Logo justification", classes="field-label")
                             yield Select(_select_options(JUSTIFY_OPTIONS), id="logo-justify", allow_blank=False, value="left")
                             yield Static("Logo width mode", classes="field-label")
@@ -625,6 +804,18 @@ class SkinwalkerApp(App[None]):
                             yield Select(_select_options(sorted(HERO_STYLE_MAP)), id="hero-style", allow_blank=False, value="braille")
                             yield Static("Hero width", classes="field-label")
                             yield Input(id="hero-width", placeholder="40")
+                            yield Static("Hero brightness %", classes="field-label")
+                            yield Input(id="hero-brightness", placeholder="100")
+                            yield Static("Hero contrast %", classes="field-label")
+                            yield Input(id="hero-contrast", placeholder="100")
+                            yield Static("Hero invert", classes="field-label")
+                            yield Select(_select_options(["off", "on"]), id="hero-invert", allow_blank=False, value="off")
+                            yield Static("Hero threshold (blank = off)", classes="field-label")
+                            yield Input(id="hero-threshold", placeholder="")
+                            yield Static("Hero sharpen %", classes="field-label")
+                            yield Input(id="hero-sharpen", placeholder="100")
+                            yield Static("Hero edge blend", classes="field-label")
+                            yield Select(_select_options(["off", "on"]), id="hero-edge", allow_blank=False, value="off")
                             yield Static("Hero justification", classes="field-label")
                             yield Select(_select_options(JUSTIFY_OPTIONS), id="hero-justify", allow_blank=False, value="left")
                             yield Static("Hero width mode", classes="field-label")
@@ -643,11 +834,35 @@ class SkinwalkerApp(App[None]):
                             yield TextArea("", id="hero-import")
                             yield Static("Banner hero markup", classes="field-label")
                             yield TextArea("", id="banner-hero")
+                    with TabPane("AI", id="ai-tab"):
+                        with VerticalScroll(classes="editor-scroll"):
+                            yield Static("AI Studio", classes="section-title")
+                            yield Static("Backend", classes="field-label")
+                            yield Select(
+                                backend_options(self.ai_backends),
+                                id="ai-backend",
+                                allow_blank=False,
+                                value=self.ai_backends[0],
+                            )
+                            yield Static("", id="ai-backend-note")
+                            yield Static("Creative direction", classes="field-label")
+                            yield TextArea("", id="ai-direction")
+                            with Horizontal(classes="button-row"):
+                                yield Button("AI Branding", id="ai-branding")
+                                yield Button("AI Spinner", id="ai-spinner")
+                                yield Button("AI Logo", id="ai-logo")
+                                yield Button("AI Hero", id="ai-hero")
+                            with Horizontal(classes="button-row"):
+                                yield Button("AI Bundle", id="ai-bundle")
+                            yield Static("Last AI payload", classes="field-label")
+                            yield TextArea("", id="ai-output", read_only=True)
         yield Static("", id="status")
         yield Footer()
 
     def on_mount(self) -> None:
         self.action_refresh_library()
+        self._refresh_profile_targets()
+        self._refresh_ai_backend_note()
         self._refresh_logo_font_browser()
         self.query_one("#skin-list", OptionList).focus()
 
@@ -657,31 +872,284 @@ class SkinwalkerApp(App[None]):
     def _existing_names(self) -> set[str]:
         return {entry.name for entry in self.library_entries}
 
+    def _selected_profile_target(self) -> str:
+        return str(self.query_one("#profile-target", Select).value or SELECT_DEFAULTS["profile-target"])
+
+    def _selected_ai_backend(self) -> str:
+        return str(self.query_one("#ai-backend", Select).value or self.ai_backends[0])
+
+    def _ai_direction(self) -> str:
+        return self.query_one("#ai-direction", TextArea).text.strip()
+
+    def _refresh_ai_backend_note(self) -> None:
+        detected = ", ".join(label for label, _ in backend_options(self.ai_backends))
+        selected = self._selected_ai_backend()
+        note = f"Detected: {detected or 'none'} | Selected: {selected}"
+        self.query_one("#ai-backend-note", Static).update(note)
+
+    def _refresh_profile_targets(self) -> None:
+        widget = self.query_one("#profile-target", Select)
+        current = self._selected_profile_target() if widget.value is not None else self.bridge.current_profile_name()
+        profiles = self.bridge.list_profiles()
+        widget.set_options(_select_options(profiles))
+        widget.value = current if current in profiles else profiles[0]
+
+    def _draft_modified_count(self) -> int:
+        count = 0
+        for widget_id in INPUT_TO_DRAFT:
+            if self._draft_value_for_widget(widget_id, self.draft) != self._draft_value_for_widget(widget_id, self.reference_draft):
+                count += 1
+        for widget_id in TEXTAREA_TO_DRAFT:
+            if self._draft_value_for_widget(widget_id, self.draft) != self._draft_value_for_widget(widget_id, self.reference_draft):
+                count += 1
+        return count
+
+    def _sync_widget_modified_class(self, widget_id: str, modified: bool) -> None:
+        widget = self.query_one(f"#{widget_id}")
+        if modified:
+            widget.add_class("modified")
+        else:
+            widget.remove_class("modified")
+
+    def _sync_modified_indicators(self) -> None:
+        for widget_id in INPUT_TO_DRAFT:
+            modified = self._draft_value_for_widget(widget_id, self.draft) != self._draft_value_for_widget(widget_id, self.reference_draft)
+            self._sync_widget_modified_class(widget_id, modified)
+
+        for widget_id in TEXTAREA_TO_DRAFT:
+            modified = self._draft_value_for_widget(widget_id, self.draft) != self._draft_value_for_widget(widget_id, self.reference_draft)
+            self._sync_widget_modified_class(widget_id, modified)
+
+        for widget_id in MODIFIED_TRANSIENT_INPUT_IDS:
+            current = self.query_one(f"#{widget_id}", Input).value
+            default = self._control_default_value(widget_id)
+            self._sync_widget_modified_class(widget_id, current != default)
+
+        for widget_id in MODIFIED_TRANSIENT_SELECT_IDS:
+            if widget_id == "profile-target":
+                modified = self._selected_profile_target() != self.bridge.current_profile_name()
+            else:
+                current = str(self.query_one(f"#{widget_id}", Select).value or self._control_default_value(widget_id))
+                modified = current != self._control_default_value(widget_id)
+            self._sync_widget_modified_class(widget_id, modified)
+
+        for widget_id in MODIFIED_TRANSIENT_TEXTAREA_IDS:
+            current = self.query_one(f"#{widget_id}", TextArea).text
+            default = self._control_default_value(widget_id)
+            self._sync_widget_modified_class(widget_id, current != default)
+
+    def _capture_history_state(self) -> dict:
+        transient_inputs = {
+            widget_id: self.query_one(f"#{widget_id}", Input).value
+            for widget_id in TRANSIENT_INPUT_IDS
+        }
+        transient_selects = {
+            widget_id: str(self.query_one(f"#{widget_id}", Select).value or self._control_default_value(widget_id))
+            for widget_id in TRANSIENT_SELECT_IDS
+        }
+        transient_textareas = {
+            widget_id: self.query_one(f"#{widget_id}", TextArea).text
+            for widget_id in TRANSIENT_TEXTAREA_IDS
+        }
+        return {
+            "draft": deepcopy(self.draft),
+            "reference_draft": deepcopy(self.reference_draft),
+            "current_source": self.current_source,
+            "current_name": self.current_name,
+            "dirty": self.dirty,
+            "profile_target": self._selected_profile_target(),
+            "inputs": transient_inputs,
+            "selects": transient_selects,
+            "textareas": transient_textareas,
+        }
+
+    def _reset_history(self, label: str) -> None:
+        self._history.reset(self._capture_history_state(), label=label)
+
+    def _record_history(self, label: str) -> None:
+        if self._populating_form or self._restoring_history:
+            return
+        self._history.record(self._capture_history_state(), label=label)
+
+    def _apply_history_state(self, state: dict) -> None:
+        self._restoring_history = True
+        self.current_source = str(state.get("current_source", self.current_source))
+        self.current_name = str(state.get("current_name", self.current_name))
+        self.draft = deepcopy(state.get("draft", self.draft))
+        self.reference_draft = deepcopy(state.get("reference_draft", self.reference_draft))
+        self.dirty = bool(state.get("dirty", self.dirty))
+        self._populate_form_from_draft()
+
+        profile_target = str(state.get("profile_target", self.bridge.current_profile_name()))
+        profile_widget = self.query_one("#profile-target", Select)
+        if profile_target in self.bridge.list_profiles():
+            profile_widget.value = profile_target
+
+        for widget_id, value in state.get("inputs", {}).items():
+            self.query_one(f"#{widget_id}", Input).value = str(value)
+        for widget_id, value in state.get("selects", {}).items():
+            if widget_id == "profile-target":
+                continue
+            self.query_one(f"#{widget_id}", Select).value = str(value)
+        for widget_id, value in state.get("textareas", {}).items():
+            self.query_one(f"#{widget_id}", TextArea).load_text(str(value))
+
+        self._refresh_ai_backend_note()
+        self._refresh_logo_font_browser()
+        self._refresh_preview()
+        self._restoring_history = False
+
+    def _refresh_logo_font_preview(self) -> None:
+        title = self.query_one("#logo-title", Input).value.strip() or "Skinwalker"
+        width_text = self.query_one("#logo-width", Input).value.strip() or INPUT_DEFAULTS["logo-width"]
+        style = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
+        justify = str(self.query_one("#logo-justify", Select).value or SELECT_DEFAULTS["logo-justify"])
+        fit = str(self.query_one("#logo-fit", Select).value or SELECT_DEFAULTS["logo-fit"])
+
+        try:
+            result = generate_logo_result(title, style, self._logo_color(), width=int(width_text), justify=justify, fit=fit)
+        except Exception as exc:
+            meta_text = f"Preview unavailable: {exc}"
+            preview_renderable: Text | str = Text("")
+        else:
+            meta = font_meta(result.font)
+            meta_text = (
+                f"Font: {result.font} | Category: {meta.category} | "
+                f"Tags: {', '.join(meta.tags)} | Size: {result.width}x{result.height}"
+            )
+            preview_renderable = Text.from_markup(result.markup) if result.markup else Text("")
+
+        self.query_one("#logo-font-meta", Static).update(meta_text)
+        self.query_one("#logo-font-preview", Static).update(preview_renderable)
+
     def _refresh_logo_font_browser(self) -> None:
         filter_value = self.query_one("#logo-font-filter", Input).value.strip().lower()
+        category = str(self.query_one("#logo-font-category", Select).value or "all")
         current_font = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
-        options = []
-        for font_name in list_logo_fonts():
-            if filter_value and filter_value not in font_name.lower():
-                continue
-            options.append(Option(font_name, id=font_name))
+        options = [Option(font_name, id=font_name) for font_name in filter_fonts(list_logo_fonts(), category=category, query=filter_value)]
 
         widget = self.query_one("#logo-font-list", OptionList)
         widget.clear_options()
         if not options:
             widget.add_options([Option("No matching fonts", id="__empty__", disabled=True)])
             widget.highlighted = 0
+            self.query_one("#logo-font-meta", Static).update("No matching fonts")
+            self.query_one("#logo-font-preview", Static).update(Text(""))
             return
 
         widget.add_options(options)
         target_index = next((index for index, option in enumerate(options) if option.id == current_font), 0)
         widget.highlighted = target_index
+        highlighted = widget.get_option_at_index(target_index)
+        if highlighted.id and highlighted.id != "__empty__":
+            self.query_one("#logo-style", Input).value = highlighted.id
+        self._refresh_logo_font_preview()
 
     def _apply_color_mapping(self, colors: dict[str, str], *, origin: str) -> None:
         self.draft.setdefault("colors", {}).update(colors)
+        for key, value in colors.items():
+            if key in COLOR_KEYS:
+                self.query_one(f"#color-{key}", Input).value = value
+        self._sync_color_tool()
         self.dirty = True
-        self._populate_form_from_draft()
         self._refresh_preview()
+        self._record_history(origin)
+        self._set_status(origin)
+
+    def _apply_branding_mapping(self, branding: dict[str, str], *, origin: str) -> None:
+        if not branding:
+            self._set_status(f"{origin}: no changes returned")
+            return
+
+        self.draft.setdefault("branding", {})
+        widget_map = {
+            "agent_name": "agent-name",
+            "welcome": "welcome",
+            "goodbye": "goodbye",
+            "response_label": "response-label",
+            "prompt_symbol": "prompt-symbol",
+            "help_header": "help-header",
+        }
+        for key, value in branding.items():
+            if key not in widget_map:
+                continue
+            self.draft["branding"][key] = value
+            self.query_one(f"#{widget_map[key]}", Input).value = value
+
+        if "agent_name" in branding and not self.query_one("#logo-title", Input).value.strip():
+            self.query_one("#logo-title", Input).value = branding["agent_name"]
+
+        self.dirty = True
+        self._refresh_preview()
+        self._record_history(origin)
+        self._set_status(origin)
+
+    def _apply_spinner_mapping(self, spinner: dict[str, list], *, origin: str) -> None:
+        if not spinner:
+            self._set_status(f"{origin}: no changes returned")
+            return
+
+        self.draft.setdefault("spinner", {})
+        waiting = spinner.get("waiting_faces") or []
+        thinking = spinner.get("thinking_faces") or []
+        verbs = spinner.get("thinking_verbs") or []
+        wings = spinner.get("wings") or []
+
+        if waiting:
+            self.draft["spinner"]["waiting_faces"] = waiting
+            self.query_one("#spinner-waiting", TextArea).load_text(format_multiline_list(waiting))
+        if thinking:
+            self.draft["spinner"]["thinking_faces"] = thinking
+            self.query_one("#spinner-thinking", TextArea).load_text(format_multiline_list(thinking))
+        if verbs:
+            self.draft["spinner"]["thinking_verbs"] = verbs
+            self.query_one("#spinner-verbs", TextArea).load_text(format_multiline_list(verbs))
+        if wings:
+            self.draft["spinner"]["wings"] = wings
+            self.query_one("#spinner-wings", TextArea).load_text(format_wings_text(wings))
+
+        self.dirty = True
+        self._refresh_preview()
+        self._record_history(origin)
+        self._set_status(origin)
+
+    def _set_ai_output(self, title: str, payload: dict) -> None:
+        body = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
+        self.query_one("#ai-output", TextArea).load_text(f"{title}\n{body}")
+
+    def _apply_ai_logo(self, payload: dict[str, str], *, origin: str) -> None:
+        title = payload.get("title", "").strip()
+        style_hint = payload.get("style_hint", "").strip()
+        art = payload.get("art", "").strip("\n")
+
+        if title:
+            self.query_one("#logo-title", Input).value = title
+        if style_hint:
+            resolved_font = FIGLET_STYLE_MAP.get(style_hint, "")
+            if resolved_font:
+                self.query_one("#logo-style", Input).value = resolved_font
+
+        if art:
+            markup = import_art_text(art, self._logo_color(), mode="plain", bold=True)
+            self._set_art_field("banner_logo", "banner-logo", markup)
+            self._set_status(origin)
+            return
+
+        if title or style_hint:
+            self.action_generate_logo()
+            self._set_status(origin)
+            return
+
+        self._set_status(f"{origin}: no logo changes returned")
+
+    def _apply_ai_hero(self, payload: dict[str, str], *, origin: str) -> None:
+        art = payload.get("art", "").strip("\n")
+        if not art:
+            self._set_status(f"{origin}: no hero changes returned")
+            return
+
+        markup = import_art_text(art, self._hero_color(), mode="plain")
+        self._set_art_field("banner_hero", "banner-hero", markup)
         self._set_status(origin)
 
     def _focused_text_widget_id(self) -> str:
@@ -729,6 +1197,8 @@ class SkinwalkerApp(App[None]):
         return ""
 
     def _control_default_value(self, widget_id: str) -> str:
+        if widget_id == "ai-backend":
+            return self.ai_backends[0]
         if widget_id == "logo-title":
             return (
                 str((self.reference_draft.get("branding") or {}).get("agent_name", "")).strip()
@@ -772,19 +1242,36 @@ class SkinwalkerApp(App[None]):
             return True
         return False
 
+    def _select_widget_value(self, widget_id: str) -> bool:
+        try:
+            if widget_id in INPUT_TO_DRAFT or widget_id in INPUT_DEFAULTS or widget_id == "logo-title":
+                self.query_one(f"#{widget_id}", Input).select_all()
+                return True
+            if widget_id in TEXTAREA_TO_DRAFT or widget_id in TEXTAREA_DEFAULTS:
+                self.query_one(f"#{widget_id}", TextArea).select_all()
+                return True
+        except Exception:
+            return False
+        return False
+
     def _update_meta(self) -> None:
-        active = self.bridge.get_active_skin_name()
+        current_active = self.bridge.get_active_skin_name()
+        target_profile = self._selected_profile_target()
+        target_active = self.bridge.get_active_skin_name(profile=target_profile)
         source = self.current_source or "-"
         dirty_marker = "unsaved" if self.dirty else "saved"
         draft_name = str(self.draft.get("name", "")).strip() or "(unnamed)"
+        changed_fields = self._draft_modified_count()
         self.query_one("#meta", Static).update(
             "\n".join(
                 [
-                    f"Active: {active}",
+                    f"Active: {current_active}",
+                    f"Target: {target_profile} -> {target_active}",
                     f"Hermes: {self.bridge.hermes_home}",
                     f"Draft: {draft_name}",
                     f"Source: {source}",
                     f"State: {dirty_marker}",
+                    f"Changed fields: {changed_fields}",
                 ]
             )
         )
@@ -797,7 +1284,8 @@ class SkinwalkerApp(App[None]):
         for entry in self.library_entries:
             active_marker = "*" if entry.name == active else " "
             source = "builtin" if entry.source == "builtin" else "custom"
-            prompts.append(f"{active_marker} {entry.name} [{source}] {entry.description}")
+            note_marker = " !" if entry.note or entry.invalid else ""
+            prompts.append(f"{active_marker}{note_marker} {entry.name} [{source}] {entry.description}")
 
         widget = self.query_one("#skin-list", OptionList)
         widget.clear_options()
@@ -813,12 +1301,14 @@ class SkinwalkerApp(App[None]):
     def _load_entry(self, entry: LibraryEntry) -> None:
         self.current_source = entry.source
         self.current_name = entry.name
-        self.draft = self.bridge.load_skin(entry.name, source=entry.source)
+        self.draft = self.bridge.load_skin(entry.name, source=entry.source, path=entry.path or None)
         self._snapshot_reference_draft()
         self.dirty = False
         self._populate_form_from_draft()
         self._refresh_preview()
-        self._set_status(f"Loaded {entry.source} skin {entry.name}")
+        self._reset_history(f"Load {entry.name}")
+        note_suffix = f" ({entry.note})" if entry.note else ""
+        self._set_status(f"Loaded {entry.source} skin {entry.name}{note_suffix}")
 
     def _populate_form_from_draft(self) -> None:
         self._populating_form = True
@@ -836,6 +1326,9 @@ class SkinwalkerApp(App[None]):
         set_input("skin-name", draft.get("name", ""))
         set_input("description", draft.get("description", ""))
         set_input("tool-prefix", draft.get("tool_prefix", "┊"))
+        set_select("ai-backend", self.ai_backends[0])
+        set_textarea("ai-direction", TEXTAREA_DEFAULTS["ai-direction"])
+        set_textarea("ai-output", TEXTAREA_DEFAULTS["ai-output"])
 
         branding = draft.get("branding", {})
         set_input("agent-name", branding.get("agent_name", ""))
@@ -850,6 +1343,9 @@ class SkinwalkerApp(App[None]):
         set_select("palette-import-mode", SELECT_DEFAULTS["palette-import-mode"])
         set_select("color-target", "banner_border")
         set_input("color-tool-value", colors.get("banner_border", "#8EA3FF"))
+        set_input("yaml-file-path", INPUT_DEFAULTS["yaml-file-path"])
+        set_select("yaml-import-mode", SELECT_DEFAULTS["yaml-import-mode"])
+        set_textarea("yaml-import", TEXTAREA_DEFAULTS["yaml-import"])
         set_input("palette-file-path", INPUT_DEFAULTS["palette-file-path"])
         set_textarea("palette-import", TEXTAREA_DEFAULTS["palette-import"])
         for color_key in COLOR_KEYS:
@@ -869,6 +1365,7 @@ class SkinwalkerApp(App[None]):
         set_input("logo-title", branding.get("agent_name") or draft.get("name", ""))
         set_input("logo-width", INPUT_DEFAULTS["logo-width"])
         set_input("logo-style", INPUT_DEFAULTS["logo-style"])
+        set_select("logo-font-category", SELECT_DEFAULTS["logo-font-category"])
         set_input("logo-font-filter", INPUT_DEFAULTS["logo-font-filter"])
         set_select("logo-justify", SELECT_DEFAULTS["logo-justify"])
         set_select("logo-fit", SELECT_DEFAULTS["logo-fit"])
@@ -880,6 +1377,12 @@ class SkinwalkerApp(App[None]):
         set_input("hero-path", "")
         set_select("hero-style", SELECT_DEFAULTS["hero-style"])
         set_input("hero-width", INPUT_DEFAULTS["hero-width"])
+        set_input("hero-brightness", INPUT_DEFAULTS["hero-brightness"])
+        set_input("hero-contrast", INPUT_DEFAULTS["hero-contrast"])
+        set_select("hero-invert", SELECT_DEFAULTS["hero-invert"])
+        set_input("hero-threshold", INPUT_DEFAULTS["hero-threshold"])
+        set_input("hero-sharpen", INPUT_DEFAULTS["hero-sharpen"])
+        set_select("hero-edge", SELECT_DEFAULTS["hero-edge"])
         set_select("hero-justify", SELECT_DEFAULTS["hero-justify"])
         set_select("hero-fit", SELECT_DEFAULTS["hero-fit"])
         set_select("hero-import-mode", SELECT_DEFAULTS["hero-import-mode"])
@@ -888,7 +1391,9 @@ class SkinwalkerApp(App[None]):
         set_textarea("banner-hero", draft.get("banner_hero", ""))
 
         self._populating_form = False
+        self._refresh_ai_backend_note()
         self._refresh_logo_font_browser()
+        self._sync_modified_indicators()
         self._update_meta()
 
     def _refresh_preview(self) -> None:
@@ -916,6 +1421,8 @@ class SkinwalkerApp(App[None]):
         self.query_one("#preview", Static).update(preview_renderable)
         self.query_one("#color-preview", Static).update(color_renderable)
         self.query_one("#yaml-view", TextArea).load_text(yaml_text)
+        self._refresh_logo_font_preview()
+        self._sync_modified_indicators()
         self._update_meta()
         if preview_error:
             self._set_status(f"Preview recovered from invalid draft state: {preview_error}")
@@ -937,6 +1444,7 @@ class SkinwalkerApp(App[None]):
 
         self.dirty = True
         self._refresh_preview()
+        self._record_history(f"Edit {widget_id}")
 
     def _apply_textarea_change(self, widget_id: str, value: str) -> None:
         if widget_id not in TEXTAREA_TO_DRAFT:
@@ -962,12 +1470,14 @@ class SkinwalkerApp(App[None]):
 
         self.dirty = True
         self._refresh_preview()
+        self._record_history(f"Edit {widget_id}")
 
     def _set_art_field(self, field_name: str, widget_id: str, markup: str) -> None:
         self.draft[field_name] = markup
         self.query_one(f"#{widget_id}", TextArea).load_text(markup)
         self.dirty = True
         self._refresh_preview()
+        self._record_history(f"Update {field_name}")
 
     def _logo_color(self) -> str:
         return normalize_color_token(self.draft.get("colors", {}).get("banner_title", "#8EA3FF"), "#8EA3FF")
@@ -1004,6 +1514,7 @@ class SkinwalkerApp(App[None]):
         self.dirty = False
         self._refresh_library_widget(selected_name=self.current_name)
         self._refresh_preview()
+        self._reset_history(f"Save {self.current_name}")
         self._set_status(f"Saved {self.current_name} to {path}")
         return True
 
@@ -1041,12 +1552,70 @@ class SkinwalkerApp(App[None]):
             else:
                 self._open_save_as_screen(after_save=continue_fn)
 
-    def _activate_current_skin(self) -> None:
+    def _apply_imported_skin(self, imported: dict, *, mode: str, origin: str) -> None:
+        import_mode = str(mode or "replace").strip().lower() or "replace"
+        if import_mode not in SKIN_IMPORT_MODE_OPTIONS:
+            self._set_status(f"Unknown YAML import mode: {mode}")
+            return
+
+        if import_mode == "merge":
+            self.draft = merge_skin(self.draft, imported)
+        else:
+            self.draft = merge_skin(self.default_skin, imported)
+            self.current_source = "import"
+            self.current_name = str(self.draft.get("name", "")).strip()
+
+        self.dirty = True
+        self._populate_form_from_draft()
+        self._refresh_preview()
+        self._record_history(origin)
+        self._set_status(origin)
+
+    def action_import_yaml_text(self) -> None:
+        mode = str(self.query_one("#yaml-import-mode", Select).value or "replace")
+        text = self.query_one("#yaml-import", TextArea).text
         try:
-            self.bridge.activate_skin(self.draft["name"])
+            imported = parse_skin_yaml(text, strict=False)
+        except Exception as exc:
+            self._set_status(f"YAML import failed: {exc}")
+            return
+
+        self._apply_imported_skin(imported, mode=mode, origin=f"Imported skin YAML from text ({mode})")
+
+    def action_import_yaml_file(self) -> None:
+        mode = str(self.query_one("#yaml-import-mode", Select).value or "replace")
+        path = self.query_one("#yaml-file-path", Input).value.strip()
+        try:
+            imported = import_skin_yaml_file(path, strict=False)
+        except Exception as exc:
+            self._set_status(f"YAML file import failed: {exc}")
+            return
+
+        self._apply_imported_skin(imported, mode=mode, origin=f"Imported skin YAML file ({mode})")
+
+    def action_export_yaml_file(self) -> None:
+        path_text = self.query_one("#yaml-file-path", Input).value.strip()
+        if not path_text:
+            self._set_status("Enter a YAML file path first")
+            return
+
+        target_path = Path(path_text).expanduser()
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(self.query_one("#yaml-view", TextArea).text, encoding="utf-8")
+        except Exception as exc:
+            self._set_status(f"YAML export failed: {exc}")
+            return
+
+        self._set_status(f"Exported YAML preview to {target_path}")
+
+    def _activate_current_skin(self) -> None:
+        target_profile = self._selected_profile_target()
+        try:
+            self.bridge.activate_skin(self.draft["name"], profile=target_profile)
             self._refresh_library_widget(selected_name=self.draft["name"])
             self._update_meta()
-            self._set_status(f"Activated {self.draft['name']}")
+            self._set_status(f"Activated {self.draft['name']} for profile {target_profile}")
         except Exception as exc:
             self._set_status(f"Activate failed: {exc}")
 
@@ -1074,6 +1643,7 @@ class SkinwalkerApp(App[None]):
         self.query_one("#color-tool-value", Input).value = normalized
         self.dirty = True
         self._refresh_preview()
+        self._record_history(f"Color {target}")
         self._set_status(f"Updated {target} to {normalized}")
 
     def _adjust_target_color(self, *, hue_shift: float = 0.0, lightness_shift: float = 0.0, saturation_shift: float = 0.0) -> None:
@@ -1131,12 +1701,8 @@ class SkinwalkerApp(App[None]):
             self._set_status(f"Spinner preset failed: {exc}")
             return
 
-        self.draft["spinner"] = spinner
-        self.dirty = True
-        self._populate_form_from_draft()
-        self._refresh_preview()
         self.query_one("#spinner-preset", Select).value = preset_name
-        self._set_status(f"Applied spinner preset {preset_name}")
+        self._apply_spinner_mapping(spinner, origin=f"Applied spinner preset {preset_name}")
 
     def action_import_logo_text(self) -> None:
         mode = str(self.query_one("#logo-import-mode", Select).value) or "plain"
@@ -1186,6 +1752,172 @@ class SkinwalkerApp(App[None]):
         self._set_art_field("banner_hero", "banner-hero", markup)
         self._set_status(f"Imported hero file as {mode}")
 
+    def action_generate_ai_branding(self) -> None:
+        backend = self._selected_ai_backend()
+        direction = self._ai_direction()
+        self._set_status(f"Generating branding with {backend}...")
+        try:
+            branding = generate_branding_bundle(self.draft, backend=backend, direction=direction)
+        except Exception as exc:
+            self._set_status(f"AI branding failed: {exc}")
+            return
+
+        payload = {"backend": backend, "direction": direction, "branding": branding}
+        self._set_ai_output("AI Branding", payload)
+        self._apply_branding_mapping(branding, origin=f"Applied AI branding via {backend}")
+
+    def action_generate_ai_spinner(self) -> None:
+        backend = self._selected_ai_backend()
+        direction = self._ai_direction()
+        self._set_status(f"Generating spinner bundle with {backend}...")
+        try:
+            spinner = generate_spinner_bundle(self.draft, backend=backend, direction=direction)
+        except Exception as exc:
+            self._set_status(f"AI spinner failed: {exc}")
+            return
+
+        payload = {"backend": backend, "direction": direction, "spinner": spinner}
+        self._set_ai_output("AI Spinner", payload)
+        self._apply_spinner_mapping(spinner, origin=f"Applied AI spinner via {backend}")
+
+    def action_generate_ai_logo(self) -> None:
+        backend = self._selected_ai_backend()
+        direction = self._ai_direction()
+        self._set_status(f"Generating logo concept with {backend}...")
+        try:
+            logo = generate_logo_bundle(self.draft, backend=backend, direction=direction)
+        except Exception as exc:
+            self._set_status(f"AI logo failed: {exc}")
+            return
+
+        payload = {"backend": backend, "direction": direction, "logo": logo}
+        self._set_ai_output("AI Logo", payload)
+        try:
+            self._apply_ai_logo(logo, origin=f"Applied AI logo via {backend}")
+        except Exception as exc:
+            self._set_status(f"AI logo apply failed: {exc}")
+
+    def action_generate_ai_hero(self) -> None:
+        backend = self._selected_ai_backend()
+        direction = self._ai_direction()
+        self._set_status(f"Generating hero art with {backend}...")
+        try:
+            hero = generate_hero_bundle(self.draft, backend=backend, direction=direction)
+        except Exception as exc:
+            self._set_status(f"AI hero failed: {exc}")
+            return
+
+        payload = {"backend": backend, "direction": direction, "hero": hero}
+        self._set_ai_output("AI Hero", payload)
+        try:
+            self._apply_ai_hero(hero, origin=f"Applied AI hero via {backend}")
+        except Exception as exc:
+            self._set_status(f"AI hero apply failed: {exc}")
+
+    def action_generate_ai_bundle(self) -> None:
+        backend = self._selected_ai_backend()
+        direction = self._ai_direction()
+        self._set_status(f"Generating full skin bundle with {backend}...")
+        try:
+            payload = generate_skin_bundle(self.draft, backend=backend, direction=direction)
+        except Exception as exc:
+            self._set_status(f"AI bundle failed: {exc}")
+            return
+
+        self._set_ai_output("AI Bundle", {"backend": backend, "direction": direction, **payload})
+        try:
+            branding = payload.get("branding", {})
+            spinner = payload.get("spinner", {})
+            logo = payload.get("logo", {})
+            hero = payload.get("hero", {})
+
+            changed = False
+            if branding:
+                self.draft.setdefault("branding", {})
+                widget_map = {
+                    "agent_name": "agent-name",
+                    "welcome": "welcome",
+                    "goodbye": "goodbye",
+                    "response_label": "response-label",
+                    "prompt_symbol": "prompt-symbol",
+                    "help_header": "help-header",
+                }
+                for key, value in branding.items():
+                    if key in widget_map and value:
+                        self.draft["branding"][key] = value
+                        self.query_one(f"#{widget_map[key]}", Input).value = value
+                        changed = True
+                if branding.get("agent_name") and not self.query_one("#logo-title", Input).value.strip():
+                    self.query_one("#logo-title", Input).value = str(branding["agent_name"])
+
+            if spinner:
+                waiting = spinner.get("waiting_faces") or []
+                thinking = spinner.get("thinking_faces") or []
+                verbs = spinner.get("thinking_verbs") or []
+                wings = spinner.get("wings") or []
+                self.draft.setdefault("spinner", {})
+                if waiting:
+                    self.draft["spinner"]["waiting_faces"] = waiting
+                    self.query_one("#spinner-waiting", TextArea).load_text(format_multiline_list(waiting))
+                    changed = True
+                if thinking:
+                    self.draft["spinner"]["thinking_faces"] = thinking
+                    self.query_one("#spinner-thinking", TextArea).load_text(format_multiline_list(thinking))
+                    changed = True
+                if verbs:
+                    self.draft["spinner"]["thinking_verbs"] = verbs
+                    self.query_one("#spinner-verbs", TextArea).load_text(format_multiline_list(verbs))
+                    changed = True
+                if wings:
+                    self.draft["spinner"]["wings"] = wings
+                    self.query_one("#spinner-wings", TextArea).load_text(format_wings_text(wings))
+                    changed = True
+
+            logo_title = str(logo.get("title", "")).strip()
+            logo_style_hint = str(logo.get("style_hint", "")).strip()
+            logo_art = str(logo.get("art", "")).strip("\n")
+            if logo_title:
+                self.query_one("#logo-title", Input).value = logo_title
+                changed = True
+            if logo_style_hint:
+                resolved_font = FIGLET_STYLE_MAP.get(logo_style_hint, "")
+                if resolved_font:
+                    self.query_one("#logo-style", Input).value = resolved_font
+                    changed = True
+            if logo_art:
+                markup = import_art_text(logo_art, self._logo_color(), mode="plain", bold=True)
+                self.draft["banner_logo"] = markup
+                self.query_one("#banner-logo", TextArea).load_text(markup)
+                changed = True
+            elif logo_title or logo_style_hint:
+                width_text = self.query_one("#logo-width", Input).value.strip() or INPUT_DEFAULTS["logo-width"]
+                style = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
+                justify = str(self.query_one("#logo-justify", Select).value) or SELECT_DEFAULTS["logo-justify"]
+                fit = str(self.query_one("#logo-fit", Select).value) or SELECT_DEFAULTS["logo-fit"]
+                result = generate_logo_result(logo_title or self.query_one("#logo-title", Input).value.strip() or "logo", style, self._logo_color(), width=int(width_text), justify=justify, fit=fit)
+                self.draft["banner_logo"] = result.markup
+                self.query_one("#banner-logo", TextArea).load_text(result.markup)
+                changed = True
+
+            hero_art = str(hero.get("art", "")).strip("\n")
+            if hero_art:
+                markup = import_art_text(hero_art, self._hero_color(), mode="plain")
+                self.draft["banner_hero"] = markup
+                self.query_one("#banner-hero", TextArea).load_text(markup)
+                changed = True
+        except Exception as exc:
+            self._set_status(f"AI bundle apply failed: {exc}")
+            return
+
+        if not changed:
+            self._set_status(f"AI bundle via {backend} returned no changes")
+            return
+
+        self.dirty = True
+        self._refresh_preview()
+        self._record_history(f"AI bundle {backend}")
+        self._set_status(f"Applied AI bundle via {backend}")
+
     def action_pick_emoji(self) -> None:
         target_id = self._focused_text_widget_id()
         if not target_id:
@@ -1210,9 +1942,18 @@ class SkinwalkerApp(App[None]):
             self._emoji_target_id = ""
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        if self._populating_form or not event.input.id:
+        if self._populating_form or self._restoring_history or not event.input.id:
             return
         if event.input.id == "color-tool-value":
+            self._sync_modified_indicators()
+            return
+        if event.input.id in TRANSIENT_INPUT_IDS:
+            if event.input.id in {"logo-title", "logo-width", "logo-style", "logo-font-filter"}:
+                self._refresh_logo_font_browser()
+            if event.input.id.startswith("hero-") or event.input.id in {"logo-title", "logo-width", "logo-style"}:
+                self._refresh_preview()
+            self._sync_modified_indicators()
+            self._record_history(f"Edit {event.input.id}")
             return
         if event.input.id in {"logo-font-filter", "logo-style"}:
             self._refresh_logo_font_browser()
@@ -1222,13 +1963,37 @@ class SkinwalkerApp(App[None]):
             self.query_one("#color-tool-value", Input).value = event.value
 
     def on_select_changed(self, event: Select.Changed) -> None:
-        if self._populating_form or not event.select.id:
+        if self._populating_form or self._restoring_history or not event.select.id:
             return
         if event.select.id == "color-target":
             self._sync_color_tool()
+            self._sync_modified_indicators()
+            return
+        if event.select.id == "ai-backend":
+            self._refresh_ai_backend_note()
+            self._sync_modified_indicators()
+            self._record_history(f"Select {event.select.id}")
+            return
+        if event.select.id in {"logo-font-category", "logo-justify", "logo-fit"}:
+            self._refresh_logo_font_browser()
+            self._sync_modified_indicators()
+            self._record_history(f"Select {event.select.id}")
+            return
+        if event.select.id in {"profile-target", "yaml-import-mode", "hero-style", "hero-invert", "hero-justify", "hero-fit", "hero-edge", "hero-import-mode", "logo-import-mode"}:
+            self._refresh_preview()
+            self._sync_modified_indicators()
+            self._record_history(f"Select {event.select.id}")
+            return
+        if event.select.id in TRANSIENT_SELECT_IDS:
+            self._sync_modified_indicators()
+            self._record_history(f"Select {event.select.id}")
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        if self._populating_form or not event.text_area.id:
+        if self._populating_form or self._restoring_history or not event.text_area.id:
+            return
+        if event.text_area.id in TRANSIENT_TEXTAREA_IDS:
+            self._sync_modified_indicators()
+            self._record_history(f"Edit {event.text_area.id}")
             return
         self._apply_textarea_change(event.text_area.id, event.text_area.text)
 
@@ -1283,18 +2048,22 @@ class SkinwalkerApp(App[None]):
             self._adjust_target_color(saturation_shift=-0.08)
         elif button_id == "apply-spinner-preset":
             self.action_apply_spinner_preset()
+        elif button_id == "import-yaml-text":
+            self.action_import_yaml_text()
+        elif button_id == "import-yaml-file":
+            self.action_import_yaml_file()
+        elif button_id == "export-yaml-file":
+            self.action_export_yaml_file()
+        elif button_id == "undo":
+            self.action_undo()
+        elif button_id == "redo":
+            self.action_redo()
+        elif button_id == "select-focused":
+            self.action_select_focused()
         elif button_id == "clear-focused":
-            focused = self.screen.focused
-            if focused is None or not getattr(focused, "id", None) or not self._clear_widget_value(focused.id):
-                self._set_status("Focus a supported field to clear it")
-            else:
-                self._set_status(f"Cleared {focused.id}")
+            self.action_clear_focused()
         elif button_id == "reset-focused":
-            focused = self.screen.focused
-            if focused is None or not getattr(focused, "id", None) or not self._reset_widget_value(focused.id):
-                self._set_status("Focus a supported field to reset it")
-            else:
-                self._set_status(f"Reset {focused.id}")
+            self.action_reset_focused()
         elif button_id == "pick-emoji":
             self.action_pick_emoji()
         elif button_id == "save":
@@ -1321,8 +2090,58 @@ class SkinwalkerApp(App[None]):
             self.action_import_hero_text()
         elif button_id == "import-hero-file":
             self.action_import_hero_file()
+        elif button_id == "ai-branding":
+            self.action_generate_ai_branding()
+        elif button_id == "ai-spinner":
+            self.action_generate_ai_spinner()
+        elif button_id == "ai-logo":
+            self.action_generate_ai_logo()
+        elif button_id == "ai-hero":
+            self.action_generate_ai_hero()
+        elif button_id == "ai-bundle":
+            self.action_generate_ai_bundle()
+
+    def action_undo(self) -> None:
+        entry = self._history.undo()
+        if entry is None:
+            self._set_status("Nothing to undo")
+            return
+        self._apply_history_state(entry.state)
+        self._set_status(f"Undid: {entry.label}")
+
+    def action_redo(self) -> None:
+        entry = self._history.redo()
+        if entry is None:
+            self._set_status("Nothing to redo")
+            return
+        self._apply_history_state(entry.state)
+        self._set_status(f"Redid: {entry.label}")
+
+    def action_select_focused(self) -> None:
+        focused = self.screen.focused
+        if focused is None or not getattr(focused, "id", None) or not self._select_widget_value(focused.id):
+            self._set_status("Focus a supported text field to select it")
+            return
+        self._set_status(f"Selected {focused.id}")
+
+    def action_clear_focused(self) -> None:
+        focused = self.screen.focused
+        if focused is None or not getattr(focused, "id", None) or not self._clear_widget_value(focused.id):
+            self._set_status("Focus a supported field to clear it")
+            return
+        self._record_history(f"Clear {focused.id}")
+        self._set_status(f"Cleared {focused.id}")
+
+    def action_reset_focused(self) -> None:
+        focused = self.screen.focused
+        if focused is None or not getattr(focused, "id", None) or not self._reset_widget_value(focused.id):
+            self._set_status("Focus a supported field to reset it")
+            return
+        self._record_history(f"Reset {focused.id}")
+        self._set_status(f"Reset {focused.id}")
 
     def action_refresh_library(self) -> None:
+        self._refresh_profile_targets()
         self._refresh_library_widget(selected_name=self.current_name or self.bridge.get_active_skin_name())
         if not self.current_name and self.library_entries:
             active = self.bridge.get_active_skin_name()
@@ -1342,6 +2161,7 @@ class SkinwalkerApp(App[None]):
             self.dirty = True
             self._populate_form_from_draft()
             self._refresh_preview()
+            self._record_history(f"New draft {name}")
             self._set_status(f"Created draft {name}")
 
         self._guard_dirty_replace("Create a new draft and discard current unsaved changes?", create_new)
@@ -1360,6 +2180,7 @@ class SkinwalkerApp(App[None]):
             self.dirty = True
             self._populate_form_from_draft()
             self._refresh_preview()
+            self._record_history(f"Clone to {new_name}")
             self._set_status(f"Cloned draft to {new_name}")
 
         self._guard_dirty_replace("Clone into a new draft and discard current unsaved changes?", clone_current)
@@ -1409,24 +2230,43 @@ class SkinwalkerApp(App[None]):
         color = self._logo_color()
 
         try:
-            markup = generate_logo_markup(title, style, color, width=int(width_text), justify=justify, fit=fit)
+            result = generate_logo_result(title, style, color, width=int(width_text), justify=justify, fit=fit)
         except Exception as exc:
             self._set_status(f"Logo generation failed: {exc}")
             return
 
-        self._set_art_field("banner_logo", "banner-logo", markup)
-        self._set_status(f"Generated logo using {style} at width {width_text} ({justify}, {fit})")
+        self._set_art_field("banner_logo", "banner-logo", result.markup)
+        self._set_status(f"Generated logo using {result.font} at {result.width}x{result.height} ({justify}, {fit})")
 
     def action_generate_hero(self) -> None:
         image_path = self.query_one("#hero-path", Input).value.strip()
         style = str(self.query_one("#hero-style", Select).value) or SELECT_DEFAULTS["hero-style"]
         width_text = self.query_one("#hero-width", Input).value.strip() or INPUT_DEFAULTS["hero-width"]
+        brightness_text = self.query_one("#hero-brightness", Input).value.strip() or INPUT_DEFAULTS["hero-brightness"]
+        contrast_text = self.query_one("#hero-contrast", Input).value.strip() or INPUT_DEFAULTS["hero-contrast"]
+        invert = str(self.query_one("#hero-invert", Select).value or "off") == "on"
+        threshold_text = self.query_one("#hero-threshold", Input).value.strip()
+        sharpen_text = self.query_one("#hero-sharpen", Input).value.strip() or INPUT_DEFAULTS["hero-sharpen"]
+        edge_strength = 0.35 if str(self.query_one("#hero-edge", Select).value or "off") == "on" else 0.0
         justify = str(self.query_one("#hero-justify", Select).value) or SELECT_DEFAULTS["hero-justify"]
         fit = str(self.query_one("#hero-fit", Select).value) or SELECT_DEFAULTS["hero-fit"]
         color = self._hero_color()
 
         try:
-            result = generate_hero_markup(image_path, style, int(width_text), color, justify=justify, fit=fit)
+            result = generate_hero_markup(
+                image_path,
+                style,
+                int(width_text),
+                color,
+                justify=justify,
+                fit=fit,
+                brightness=max(0.1, float(brightness_text) / 100.0),
+                contrast=max(0.1, float(contrast_text) / 100.0),
+                invert=invert,
+                threshold=int(threshold_text) if threshold_text else None,
+                sharpen=max(0.1, float(sharpen_text) / 100.0),
+                edge_strength=edge_strength,
+            )
         except Exception as exc:
             self._set_status(f"Hero generation failed: {exc}")
             return

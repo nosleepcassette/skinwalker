@@ -54,6 +54,7 @@ JUSTIFY_OPTIONS = ["left", "center", "right"]
 FIT_MODE_OPTIONS = ["flexible", "fixed"]
 IMPORT_MODE_OPTIONS = ["plain", "markup"]
 PALETTE_IMPORT_MODE_OPTIONS = ["auto", "keyed", "list"]
+SKIN_IMPORT_MODE_OPTIONS = ["replace", "merge"]
 
 FIGLET_STYLE_MAP = {
     "minimal": "standard",
@@ -601,6 +602,29 @@ def import_color_scheme_file(path: str, *, mode: str = "auto") -> dict[str, str]
     if not file_path.exists():
         raise FileNotFoundError(f"Colorscheme file not found: {file_path}")
     return parse_color_scheme(file_path.read_text(encoding="utf-8"), mode=mode)
+
+
+def parse_skin_yaml(text: str, *, strict: bool = False) -> dict:
+    raw = str(text or "").strip()
+    if not raw:
+        raise ValueError("Paste skin YAML first")
+
+    try:
+        parsed = yaml.safe_load(raw)
+    except Exception as exc:
+        raise ValueError(f"Invalid YAML: {exc}") from exc
+
+    if not isinstance(parsed, dict):
+        raise ValueError("Skin YAML must decode to a mapping")
+
+    return normalize_skin(parsed, strict=strict)
+
+
+def import_skin_yaml_file(path: str, *, strict: bool = False) -> dict:
+    file_path = Path(path).expanduser()
+    if not file_path.exists():
+        raise FileNotFoundError(f"Skin YAML file not found: {file_path}")
+    return parse_skin_yaml(file_path.read_text(encoding="utf-8"), strict=strict)
 
 
 def normalize_skin(source: dict, *, strict: bool = True) -> dict:

@@ -9,39 +9,45 @@ It is aimed at the full Hermes skin surface rather than a toy theme picker. The 
 The current app supports:
 
 - browsing built-in and custom Hermes skins
+- duplicate-name handling for user skin YAML files
 - editing the real Hermes skin schema
 - saving custom skins into `~/.hermes/skins/`
-- activating a skin by updating `display.skin` in the active Hermes `config.yaml`
+- activating a skin by updating `display.skin` in the selected Hermes profile `config.yaml`
 - terminal-native live preview
 - generated YAML preview
+- whole-skin YAML import from text or a file path
+- YAML export to a target path
 - logo generation from text via `pyfiglet`
-- first-pass hero generation from an image path via Pillow
+- image-to-ASCII hero generation from an image path via Pillow
 - palette presets with live swatch preview
 - direct color editing with target selectors and adjustment actions
 - palette import from pasted text or a file path
 - spinner preset shelf with waiting/thinking/wings bundles
 - logo and hero generation controls for justification and flexible vs fixed-width output
+- hero generation controls for brightness, contrast, invert, threshold, sharpen, and edge blend
 - logo and hero art import from text or a file path
-- searchable font browser for logo generation
+- categorized and searchable font browser for logo generation
+- live preview for the highlighted logo font
 - emoji and symbol picker for spinner, prompt, tool, and art text fields
-- focused-field clear/reset helpers
-- tabbed editor panes for identity, colors, spinner, and art
+- focused-field select-all, clear, and reset helpers
+- app-level undo and redo across draft and transient editor state
+- modified-field highlighting and changed-field counts
+- AI-assisted branding, spinner, logo, hero, and bundle generation via Hermes or configured API backends
+- tabbed editor panes for identity, colors, spinner, art, and AI
 - `Save As` for built-in or otherwise non-directly-saveable drafts
 - unsaved-change confirmation before replacing the current draft
 
 ## Project Status
 
-This repository is in the "strong MVP" stage.
+This repository is in the "upgraded working beta" stage.
 
-The app already works as a real Hermes skin editor, but it still needs a substantial UX and architecture pass in a few areas:
+The app now covers the major foundation and workflow gaps from the initial MVP. The largest remaining work is around deeper image-lab parity, richer color UX, and further polish:
 
-- app-level undo/redo
-- better large-text editing ergonomics
-- profile-aware targeting in the UI
-- stronger library handling around duplicate names and imports
-- richer font organization and live previews
-- a much more capable hero/image-to-ASCII pipeline
-- test coverage
+- a fuller color-picker and contrast-audit workflow
+- favorites/recents and richer font browsing beyond category heuristics
+- a more capable hero/image lab with dithering and image preview
+- async/non-blocking AI execution
+- broader preview parity and regression coverage
 
 Those upgrades are now spec'd in:
 
@@ -90,6 +96,11 @@ uv run skinwalker --dump-active
 - `F5`: Generate logo
 - `F6`: Generate hero
 - `F7`: Refresh library
+- `Ctrl+Z`: Undo
+- `Ctrl+Y`: Redo
+- `Ctrl+Shift+A`: Select focused field contents
+- `Ctrl+L`: Clear focused field
+- `Ctrl+Shift+R`: Reset focused field
 - `Ctrl+E`: Open emoji/symbol picker for the focused supported field
 
 ## Current App Layout
@@ -106,6 +117,8 @@ The TUI is organized into three panes:
 - preview tab
 - YAML tab
 - save / save-as / activate actions
+- profile target selector
+- undo / redo actions
 - quick access to emoji picker, logo generation, and hero generation
 
 3. Editor pane
@@ -114,6 +127,7 @@ The TUI is organized into three panes:
 - colors tab
 - spinner tab
 - art tab
+- AI tab
 
 ## Architecture Overview
 
@@ -127,6 +141,12 @@ Core modules:
   - skin normalization, palette/spinner presets, parsing helpers
 - [src/skinwalker/art.py](/Users/maps/dev/skinwalker/src/skinwalker/art.py)
   - logo generation, art import, and current hero generation
+- [src/skinwalker/ai.py](/Users/maps/dev/skinwalker/src/skinwalker/ai.py)
+  - Hermes/API-backed structured suggestion generation
+- [src/skinwalker/fonts.py](/Users/maps/dev/skinwalker/src/skinwalker/fonts.py)
+  - font categorization and filtering metadata
+- [src/skinwalker/history.py](/Users/maps/dev/skinwalker/src/skinwalker/history.py)
+  - app-level undo/redo history
 - [src/skinwalker/preview.py](/Users/maps/dev/skinwalker/src/skinwalker/preview.py)
   - terminal-native preview rendering
 - [src/skinwalker/__main__.py](/Users/maps/dev/skinwalker/src/skinwalker/__main__.py)
@@ -151,12 +171,11 @@ Core modules:
 
 Current known limitations include:
 
-- no repository test suite yet
-- no app-level undo/redo
-- the current font browser is searchable but still flat
-- the hero generator is intentionally first-pass and much smaller than the planned image lab
-- preview fidelity is useful but not exhaustive for all Hermes runtime states
-- duplicate visible names in user skin YAML can still create confusing library rows until the planned bridge cleanup lands
+- no dedicated TUI integration tests yet; the current suite is unit-level
+- the current font browser is categorized and previewable, but not yet favorites/recents driven
+- the hero generator is stronger, but still much smaller than the planned image lab
+- preview fidelity is broader than before but still not exhaustive for all Hermes runtime states
+- AI generation currently runs synchronously and can block the UI while a backend responds
 
 ## Roadmap
 
@@ -164,20 +183,18 @@ The current roadmap intentionally avoids spending effort on adding more built-in
 
 ### Phase 1: Foundation
 
-- add tests for normalization, bridge behavior, generators, and app state
-- fix duplicate library names and other library edge cases
-- separate persisted draft state from transient generator state
-- add whole-skin YAML import/export
-- add profile-aware activation and profile targeting
-- add diagnostics for validation, save, and import issues
+- extend tests from unit coverage into app-level interaction coverage
+- keep tightening library/import diagnostics and edge-case handling
+- separate persisted draft state from transient generator state even more cleanly
+- expand whole-skin import/export ergonomics and conflict messaging
+- deepen profile-aware activation flows and profile visibility
+- add richer diagnostics for validation, save, and import issues
 
 ### Phase 2: Workflow And UX
 
-- app-level undo/redo
-- better keyboard navigation
-- per-field select-all, clear, and reset affordances
 - section-level actions for palette, spinner, logo, and hero areas
-- modified-field and modified-section highlighting
+- modified-section highlighting and diff views
+- better keyboard navigation
 - active-vs-draft diff view
 - autosave and recovery snapshots
 
@@ -192,8 +209,6 @@ The current roadmap intentionally avoids spending effort on adding more built-in
 
 ### Phase 4: Font System
 
-- categorized font browser
-- live preview for the highlighted font
 - preview-all mode for the current filtered set
 - favorites and recents
 - clearer separation between generator controls and applied banner markup
@@ -209,10 +224,10 @@ The current roadmap intentionally avoids spending effort on adding more built-in
 
 ### Phase 6: AI-Assisted Generation
 
-- Hermes-first generation backend
-- env-key fallbacks when Hermes is unavailable
-- structured suggestion output for branding, spinner bundles, and art prompts
-- explicit accept/apply flow rather than silent mutation
+- move AI generation onto workers so the TUI stays responsive
+- expand structured suggestion output and bundle controls
+- add better preview/accept/reject flows for AI payloads
+- keep Hermes-first generation with env-key fallbacks when Hermes is unavailable
 
 ## Design Direction
 

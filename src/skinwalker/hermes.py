@@ -18,6 +18,8 @@ class LibraryEntry:
     source: str
     invalid: bool = False
     error: str = ""
+    path: str = ""
+    note: str = ""
 
 
 class HermesBridge:
@@ -56,12 +58,50 @@ class HermesBridge:
     def builtin_names(self) -> set[str]:
         return set(self.builtin_templates)
 
+    @property
+    def profiles_root(self) -> Path:
+        return Path.home() / ".hermes" / "profiles"
+
     def ensure_dirs(self) -> None:
         self.skins_dir.mkdir(parents=True, exist_ok=True)
 
-    def get_active_skin_name(self) -> str:
+    def current_profile_name(self) -> str:
+        default_home = (Path.home() / ".hermes").resolve()
+        profiles_root = self.profiles_root.resolve()
+        current_home = self.hermes_home
+
+        if current_home == default_home:
+            return "default"
+
         try:
-            parsed = yaml.safe_load(self.config_path.read_text(encoding="utf-8")) or {}
+            relative = current_home.relative_to(profiles_root)
+        except ValueError:
+            return "custom"
+
+        parts = relative.parts
+        if not parts:
+            return "default"
+        return parts[0]
+
+    def list_profiles(self) -> list[str]:
+        profiles = ["default"]
+        if not self.profiles_root.exists():
+            return profiles
+        profiles.extend(path.name for path in sorted(self.profiles_root.iterdir()) if path.is_dir())
+        return profiles
+
+    def config_path_for_profile(self, profile: str | None = None) -> Path:
+        profile_name = str(profile or "").strip() or self.current_profile_name()
+        if profile_name in {"", "default", "custom"}:
+            if profile_name == "custom":
+                return self.config_path
+            return Path.home() / ".hermes" / "config.yaml"
+        return self.profiles_root / profile_name / "config.yaml"
+
+    def get_active_skin_name(self, *, profile: str | None = None) -> str:
+        try:
+            path = self.config_path if profile is None else self.config_path_for_profile(profile)
+            parsed = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
             return str(parsed.get("display", {}).get("skin", "default"))
         except Exception:
             return "default"
@@ -93,7 +133,8 @@ class HermesBridge:
 
     def list_user_skins(self) -> list[LibraryEntry]:
         self.ensure_dirs()
-        result: list[LibraryEntry] = []
+        grouped: dict[str, list[tuple[Path, str]]] = {}
+        invalid_entries: list[LibraryEntry] = []
 
         for path in sorted(self.skins_dir.glob("*.yaml")):
             try:
@@ -101,30 +142,47 @@ class HermesBridge:
                 name = str(parsed.get("name", path.stem))
                 if name in self.builtin_names:
                     continue
-                result.append(
-                    LibraryEntry(
-                        name=name,
-                        description=str(parsed.get("description", "")),
-                        source="user",
-                    )
-                )
+                grouped.setdefault(name, []).append((path, str(parsed.get("description", ""))))
             except Exception as exc:
-                result.append(
+                invalid_entries.append(
                     LibraryEntry(
                         name=path.stem,
                         description="Unreadable skin file",
                         source="user",
                         invalid=True,
                         error=str(exc),
+                        path=str(path),
                     )
                 )
 
-        return result
+        result: list[LibraryEntry] = []
+        for name in sorted(grouped):
+            options = grouped[name]
+            canonical_path, canonical_description = next(
+                ((path, description) for path, description in options if path.stem == name),
+                options[0],
+            )
+            description = canonical_description or next((desc for _, desc in options if desc), "")
+            note = ""
+            if len(options) > 1:
+                duplicates = ", ".join(path.name for path, _ in options if path != canonical_path)
+                note = f"Duplicate definitions ignored: {duplicates}"
+            result.append(
+                LibraryEntry(
+                    name=name,
+                    description=description,
+                    source="user",
+                    path=str(canonical_path),
+                    note=note,
+                )
+            )
+
+        return result + invalid_entries
 
     def list_skins(self) -> list[LibraryEntry]:
         return self.list_builtin_skins() + self.list_user_skins()
 
-    def load_skin(self, name: str, source: str | None = None) -> dict:
+    def load_skin(self, name: str, source: str | None = None, *, path: str | Path | None = None) -> dict:
         normalized_name = sanitize_skin_name(name)
 
         if source == "builtin":
@@ -134,9 +192,15 @@ class HermesBridge:
             return self._skin_config_to_dict(skin_config)
 
         if source == "user":
-            path = self.skins_dir / f"{normalized_name}.yaml"
-            if not path.exists():
+            file_path = Path(path).expanduser() if path else self.skins_dir / f"{normalized_name}.yaml"
+            if not file_path.exists():
                 raise FileNotFoundError(f"Custom skin not found: {normalized_name}")
+            try:
+                parsed = yaml.safe_load(file_path.read_text(encoding="utf-8")) or {}
+            except Exception as exc:
+                raise ValueError(f"Could not parse skin file: {file_path}") from exc
+            skin_config = self._skin_engine._build_skin_config(parsed)
+            return self._skin_config_to_dict(skin_config)
 
         skin_config = self._skin_engine.load_skin(normalized_name)
         return self._skin_config_to_dict(skin_config)
@@ -191,10 +255,12 @@ class HermesBridge:
         lines.insert(display_index + 1, f"  skin: {skin_name}")
         return "\n".join(lines) + "\n"
 
-    def activate_skin(self, name: str) -> None:
+    def activate_skin(self, name: str, *, profile: str | None = None) -> None:
         normalized_name = sanitize_skin_name(name)
         content = ""
-        if self.config_path.exists():
-            content = self.config_path.read_text(encoding="utf-8")
+        config_path = self.config_path if profile is None else self.config_path_for_profile(profile)
+        if config_path.exists():
+            content = config_path.read_text(encoding="utf-8")
         updated = self._update_display_skin_in_config(content, normalized_name)
-        self.config_path.write_text(updated, encoding="utf-8")
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(updated, encoding="utf-8")
