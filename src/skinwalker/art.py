@@ -31,9 +31,23 @@ class HeroResult:
 HERO_STYLE_MAP = {
     "braille": {"renderer": "braille"},
     "ascii": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
-    "blocks": {"renderer": "ramp", "chars": " ░▒▓█"},
-    "dots": {"renderer": "ramp", "chars": " .·•●"},
     "minimal": {"renderer": "ramp", "chars": " .:-=+*#%@"},
+    "minimalist": {"renderer": "ramp", "chars": " .:-=+*#%@"},
+    "blocks": {"renderer": "ramp", "chars": " ░▒▓█"},
+    "blockelement": {"renderer": "ramp", "chars": " ░▒▓█"},
+    "dots": {"renderer": "ramp", "chars": " .·•●"},
+    "alphabetic": {"renderer": "ramp", "chars": " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"},
+    "alphanumeric": {"renderer": "ramp", "chars": " 0123456789abcdefghijklmnopqrstuvwxyz"},
+    "numerical": {"renderer": "ramp", "chars": " 0123456789"},
+    "math": {"renderer": "ramp", "chars": " +-*/=<>^~%#@"},
+    "normal": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
+    "normal2": {"renderer": "ramp", "chars": " .,:;irsXA253hMHGS#9B&@"},
+    "grayscale": {"renderer": "ramp", "chars": " .,:;ox%#@"},
+    "extended": {"renderer": "ramp", "chars": " .·•*-+=rcxzvujfJCLQ0OZmwqpdbkhao#MW&8%B@$"},
+    "codepage437": {"renderer": "ramp", "chars": " .░▒▓█"},
+    "max": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
+    "arrow": {"renderer": "ramp", "chars": " ·←↑→↓↖↗↘↙◀▶▲▼"},
+    "arrows": {"renderer": "ramp", "chars": " ·←↑→↓↖↗↘↙◀▶▲▼"},
     "dense": {"renderer": "ramp", "chars": " .'`^\",:;Il!i~+_-?][}{1)(|\\/tfjrxnuvczXYUJCLQ0OZmwqpdbkhao*#MW&8%B@$"},
 }
 
@@ -228,7 +242,7 @@ def _load_image(image_path: str | Path) -> Image.Image:
 
 
 def _clamp_width(width: int) -> int:
-    return max(16, min(60, int(width)))
+    return max(16, min(120, int(width)))
 
 
 def _clamp_unit(value: float) -> float:
@@ -240,18 +254,60 @@ def _prepare_image(
     *,
     brightness: float = 1.0,
     contrast: float = 1.0,
-    invert: bool = False,
+    invert: bool | float = False,
     threshold: int | None = None,
     sharpen: float = 1.0,
     edge_strength: float = 0.0,
+    saturation: float = 1.0,
+    hue_shift: float = 0.0,
+    sepia: float = 0.0,
+    grayscale_blend: float = 1.0,
 ) -> Image.Image:
     prepared = image.copy()
+    if saturation != 1.0:
+        prepared = ImageEnhance.Color(prepared).enhance(max(0.0, saturation))
+    if hue_shift != 0.0:
+        import colorsys
+
+        rgb = prepared.convert("RGB")
+        pixels = rgb.load()
+        w, h = rgb.size
+        for y in range(h):
+            for x in range(w):
+                r, g, b = pixels[x, y]
+                hh, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                hh = (hh + hue_shift / 360.0) % 1.0
+                r2, g2, b2 = colorsys.hsv_to_rgb(hh, s, v)
+                pixels[x, y] = (int(r2 * 255), int(g2 * 255), int(b2 * 255))
+        prepared = rgb
+    if sepia > 0.0:
+        sepia_amount = _clamp_unit(sepia)
+        rgb = prepared.convert("RGB")
+        pixels = list(rgb.getdata())
+        sepia_pixels = []
+        for r, g, b in pixels:
+            tr = int(min(255, r * 0.393 + g * 0.769 + b * 0.189))
+            tg = int(min(255, r * 0.349 + g * 0.686 + b * 0.168))
+            tb = int(min(255, r * 0.272 + g * 0.534 + b * 0.131))
+            sr = int(r * (1 - sepia_amount) + tr * sepia_amount)
+            sg = int(g * (1 - sepia_amount) + tg * sepia_amount)
+            sb = int(b * (1 - sepia_amount) + tb * sepia_amount)
+            sepia_pixels.append((sr, sg, sb))
+        out = Image.new("RGB", rgb.size)
+        out.putdata(sepia_pixels)
+        prepared = out
     if brightness != 1.0:
         prepared = ImageEnhance.Brightness(prepared).enhance(max(0.1, brightness))
     if contrast != 1.0:
         prepared = ImageEnhance.Contrast(prepared).enhance(max(0.1, contrast))
-    if invert:
-        prepared = ImageOps.invert(prepared)
+    invert_amount = 1.0 if invert is True else 0.0 if not invert else _clamp_unit(invert)
+    if invert_amount > 0.0:
+        prepared = Image.blend(prepared, ImageOps.invert(prepared), invert_amount)
+
+    grayscale_amount = _clamp_unit(grayscale_blend)
+    if grayscale_amount > 0.0:
+        monochrome_rgb = prepared.convert("L").convert("RGB")
+        prepared = Image.blend(prepared.convert("RGB"), monochrome_rgb, grayscale_amount)
 
     grayscale = prepared.convert("L")
     grayscale = ImageOps.autocontrast(grayscale)
@@ -276,7 +332,7 @@ def _char_height(image: Image.Image, width: int, aspect_factor: float) -> int:
     return max(1, round((image.height / image.width) * width * aspect_factor))
 
 
-def _render_ramp(image: Image.Image, chars: str, width: int) -> tuple[str, int]:
+def _render_ramp(image: Image.Image, chars: str, width: int, space_density: float = 0.0) -> tuple[str, int]:
     height = _char_height(image, width, 0.5)
     resized = image.resize((width, height))
     palette = chars
@@ -287,9 +343,131 @@ def _render_ramp(image: Image.Image, chars: str, width: int) -> tuple[str, int]:
         chars_row: list[str] = []
         for x in range(resized.width):
             darkness = 1 - (resized.getpixel((x, y)) / 255)
-            index = round(darkness * steps)
+            raw_index = darkness * steps
+            adjusted = raw_index - (space_density * steps * 0.3)
+            index = max(0, min(steps, round(adjusted)))
             chars_row.append(palette[index])
         rows.append("".join(chars_row).rstrip())
+
+    return "\n".join(rows).strip("\n"), height
+
+
+def _diffuse(
+    pixels: list[list[float]],
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    err: float,
+    kernel: list[tuple[int, int, float]],
+) -> None:
+    for dy, dx, weight in kernel:
+        ny, nx = y + dy, x + dx
+        if 0 <= ny < height and 0 <= nx < width:
+            pixels[ny][nx] = max(0.0, min(1.0, pixels[ny][nx] + err * weight))
+
+
+def _render_ramp_dithered(
+    image: Image.Image, chars: str, width: int, algorithm: str
+) -> tuple[str, int]:
+    """Ramp renderer with error-diffusion dithering."""
+    height = _char_height(image, width, 0.5)
+    resized = image.resize((width, height))
+    steps = len(chars) - 1
+
+    pixels = [[resized.getpixel((x, y)) / 255.0 for x in range(width)] for y in range(height)]
+
+    rows: list[str] = []
+    for y in range(height):
+        row_chars: list[str] = []
+        for x in range(width):
+            old_val = pixels[y][x]
+            darkness = 1.0 - old_val
+            index = max(0, min(steps, round(darkness * steps)))
+            row_chars.append(chars[index])
+            quant_val = 1.0 - (index / steps)
+            err = old_val - quant_val
+
+            if algorithm == "floyd-steinberg":
+                _diffuse(
+                    pixels,
+                    x,
+                    y,
+                    width,
+                    height,
+                    err,
+                    [
+                        (0, 1, 7 / 16),
+                        (1, -1, 3 / 16),
+                        (1, 0, 5 / 16),
+                        (1, 1, 1 / 16),
+                    ],
+                )
+            elif algorithm == "atkinson":
+                _diffuse(
+                    pixels,
+                    x,
+                    y,
+                    width,
+                    height,
+                    err,
+                    [
+                        (0, 1, 1 / 8),
+                        (0, 2, 1 / 8),
+                        (1, -1, 1 / 8),
+                        (1, 0, 1 / 8),
+                        (1, 1, 1 / 8),
+                        (2, 0, 1 / 8),
+                    ],
+                )
+            elif algorithm == "jjn":
+                _diffuse(
+                    pixels,
+                    x,
+                    y,
+                    width,
+                    height,
+                    err,
+                    [
+                        (0, 1, 7 / 48),
+                        (0, 2, 5 / 48),
+                        (1, -2, 3 / 48),
+                        (1, -1, 5 / 48),
+                        (1, 0, 7 / 48),
+                        (1, 1, 5 / 48),
+                        (1, 2, 3 / 48),
+                        (2, -2, 1 / 48),
+                        (2, -1, 3 / 48),
+                        (2, 0, 5 / 48),
+                        (2, 1, 3 / 48),
+                        (2, 2, 1 / 48),
+                    ],
+                )
+            elif algorithm == "stucki":
+                _diffuse(
+                    pixels,
+                    x,
+                    y,
+                    width,
+                    height,
+                    err,
+                    [
+                        (0, 1, 8 / 42),
+                        (0, 2, 4 / 42),
+                        (1, -2, 2 / 42),
+                        (1, -1, 4 / 42),
+                        (1, 0, 8 / 42),
+                        (1, 1, 4 / 42),
+                        (1, 2, 2 / 42),
+                        (2, -2, 1 / 42),
+                        (2, -1, 2 / 42),
+                        (2, 0, 4 / 42),
+                        (2, 1, 2 / 42),
+                        (2, 2, 1 / 42),
+                    ],
+                )
+
+        rows.append("".join(row_chars).rstrip())
 
     return "\n".join(rows).strip("\n"), height
 
@@ -350,10 +528,21 @@ def generate_hero_markup(
     threshold: int | None = None,
     sharpen: float = 1.0,
     edge_strength: float = 0.0,
+    saturation: float = 1.0,
+    hue_shift: float = 0.0,
+    grayscale_blend: float = 1.0,
+    sepia: float = 0.0,
+    space_density: float = 0.0,
+    dither: str = "none",
+    padding: int = 0,
 ) -> HeroResult:
     style_key = style.strip().lower() or "braille"
     if style_key not in HERO_STYLE_MAP:
         raise ValueError(f"Unknown hero style: {style_key}")
+    dither_mode = str(dither or "none").strip().lower() or "none"
+    valid_dither_modes = {"none", "floyd-steinberg", "atkinson", "jjn", "stucki"}
+    if dither_mode not in valid_dither_modes:
+        raise ValueError(f"Unknown dither algorithm: {dither}")
 
     image = _load_image(image_path)
     image = _prepare_image(
@@ -364,19 +553,70 @@ def generate_hero_markup(
         threshold=threshold,
         sharpen=sharpen,
         edge_strength=edge_strength,
+        saturation=saturation,
+        hue_shift=hue_shift,
+        grayscale_blend=grayscale_blend,
+        sepia=sepia,
     )
     width = _clamp_width(width)
 
     if HERO_STYLE_MAP[style_key]["renderer"] == "braille":
         plain, height = _render_braille(image, width)
+    elif dither_mode != "none":
+        plain, height = _render_ramp_dithered(image, HERO_STYLE_MAP[style_key]["chars"], width, dither_mode)
     else:
-        plain, height = _render_ramp(image, HERO_STYLE_MAP[style_key]["chars"], width)
+        plain, height = _render_ramp(image, HERO_STYLE_MAP[style_key]["chars"], width, space_density)
 
     plain = _format_generated_block(plain, justify=justify, fit=fit, width=width)
+    markup = build_rich_block(plain, color)
+    padding = max(0, int(padding))
+    if padding > 0:
+        blank = "\n" * padding
+        plain = blank + plain + blank
+        markup = blank + markup + blank
 
     return HeroResult(
-        markup=build_rich_block(plain, color),
+        markup=markup,
         style=style_key,
         width=width,
-        height=height,
+        height=plain.count("\n") + 1 if plain else height,
     )
+
+
+def _export_ascii_png(markup: str, output_path: str | Path, font_size: int = 14) -> None:
+    from PIL import ImageDraw, ImageFont
+    from rich.text import Text as RichText
+
+    plain = RichText.from_markup(markup).plain
+    lines = plain.splitlines()
+    if not lines:
+        raise ValueError("No content to export")
+
+    try:
+        font = ImageFont.truetype("Courier New.ttf", font_size)
+    except Exception:
+        font = ImageFont.load_default()
+
+    dummy = Image.new("RGB", (1, 1))
+    draw = ImageDraw.Draw(dummy)
+    char_w = max(draw.textlength(line or " ", font=font) for line in lines) if lines else font_size
+    char_h = font_size + 2
+
+    img_w = int(char_w) + 8
+    img_h = char_h * len(lines) + 8
+    img = Image.new("RGB", (img_w, img_h), color=(10, 10, 10))
+    draw = ImageDraw.Draw(img)
+
+    for i, line in enumerate(lines):
+        draw.text((4, 4 + i * char_h), line, fill=(200, 200, 200), font=font)
+
+    img.save(str(Path(output_path).expanduser()))
+
+
+def _export_markup_text(markup: str, output_path: str | Path) -> None:
+    from rich.text import Text as RichText
+
+    plain = RichText.from_markup(markup).plain
+    path = Path(output_path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(plain, encoding="utf-8")

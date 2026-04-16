@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from rich.align import Align
 from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
@@ -33,6 +34,29 @@ def _recolor_markup(markup: str, color: str) -> Text:
         return Text(markup, style=color)
 
 
+def _trim_outer_padding(text: Text) -> Text:
+    lines = text.plain.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return Text("", style=text.style or "")
+
+    non_empty = [line for line in lines if line.strip()]
+    common_indent = min((len(line) - len(line.lstrip(" ")) for line in non_empty), default=0)
+    trimmed = "\n".join(line[common_indent:].rstrip() for line in lines)
+    return Text(trimmed, style=text.style or "")
+
+
+def _aligned_markup(markup: str, color: str, justify: str, native_colors: bool) -> Align:
+    if native_colors:
+        text = _trim_outer_padding(_render_markup_block(markup, ""))
+    else:
+        text = _trim_outer_padding(_recolor_markup(markup, color))
+    return Align(text, align=justify)
+
+
 def render_skin_preview(
     skin: dict,
     *,
@@ -40,6 +64,10 @@ def render_skin_preview(
     show_hero: bool = True,
     compact: bool = False,
     native_colors: bool = False,
+    logo_override: str | None = None,
+    hero_override: str | None = None,
+    logo_justify: str = "left",
+    hero_justify: str = "left",
 ):
     colors = skin.get("colors") or {}
     branding = skin.get("branding") or {}
@@ -69,12 +97,10 @@ def render_skin_preview(
             colors.get("hero_color") or colors.get("banner_accent", accent), accent
         )
 
-    if native_colors:
-        logo = _render_markup_block(skin.get("banner_logo", ""), "")
-        hero = _render_markup_block(skin.get("banner_hero", ""), "")
-    else:
-        logo = _recolor_markup(skin.get("banner_logo", ""), logo_color)
-        hero = _recolor_markup(skin.get("banner_hero", ""), hero_color)
+    logo_markup = str(logo_override if logo_override is not None else skin.get("banner_logo", ""))
+    hero_markup = str(hero_override if hero_override is not None else skin.get("banner_hero", ""))
+    logo = _aligned_markup(logo_markup, logo_color if not native_colors else "", logo_justify, native_colors)
+    hero = _aligned_markup(hero_markup, hero_color if not native_colors else "", hero_justify, native_colors)
 
     waiting_faces = spinner.get("waiting_faces") or ["◐"]
     thinking_faces = spinner.get("thinking_faces") or waiting_faces
@@ -95,7 +121,7 @@ def render_skin_preview(
         Text(f"Skin {skin.get('name', 'custom-skin')}", style=text_color),
         Text(welcome, style=text_color),
     ]
-    if show_hero:
+    if show_hero and hero_markup.strip():
         banner_items.append(hero)
     banner_body = Group(*banner_items)
 
@@ -156,7 +182,7 @@ def render_skin_preview(
     )
 
     top_items = []
-    if show_logo:
+    if show_logo and logo_markup.strip():
         top_items.append(logo)
 
     return Group(

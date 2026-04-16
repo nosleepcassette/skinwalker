@@ -7,6 +7,7 @@ FONT_CATEGORIES = [
     "all",
     "featured",
     "clean",
+    "slanted",
     "compact",
     "block",
     "shadow-3d",
@@ -14,6 +15,19 @@ FONT_CATEGORIES = [
     "decorative",
     "novelty",
 ]
+
+FONT_CATEGORY_LABELS = {
+    "all": "All Styles",
+    "featured": "Featured Picks",
+    "clean": "Standard & Clean",
+    "slanted": "Slanted & Italic",
+    "compact": "Compact & Small",
+    "block": "Heavy & Block",
+    "shadow-3d": "3D & Shadow",
+    "retro": "Retro & Computer",
+    "decorative": "Script & Decorative",
+    "novelty": "Novelty & Themed",
+}
 
 FEATURED_FONTS = {
     "standard",
@@ -62,6 +76,12 @@ COMPACT_TERMS = (
     "6x9",
     "6x10",
     "1row",
+)
+SLANTED_TERMS = (
+    "slant",
+    "italic",
+    "oblique",
+    "lean",
 )
 RETRO_TERMS = (
     "ansi",
@@ -120,6 +140,8 @@ def categorize_font(name: str) -> str:
         return "clean"
     if normalized in FEATURED_FONTS:
         return "featured"
+    if any(term in normalized for term in SLANTED_TERMS):
+        return "slanted"
     if any(term in normalized for term in SHADOW_TERMS):
         return "shadow-3d"
     if any(term in normalized for term in BLOCK_TERMS):
@@ -141,6 +163,8 @@ def font_meta(name: str) -> FontMeta:
 
     if normalized in FEATURED_FONTS:
         tags.append("featured")
+    if any(term in normalized for term in SLANTED_TERMS):
+        tags.append("slanted")
     if any(term in normalized for term in SHADOW_TERMS):
         tags.append("shadow-3d")
     if any(term in normalized for term in BLOCK_TERMS):
@@ -171,7 +195,15 @@ def filter_fonts(fonts: list[str], *, category: str = "all", query: str = "") ->
 
     for font_name in fonts:
         meta = font_meta(font_name)
-        haystack = " ".join((meta.name.lower(), meta.category, *meta.tags))
+        haystack = " ".join(
+            (
+                meta.name.lower(),
+                meta.category,
+                font_category_label(meta.category).lower(),
+                *(font_category_label(tag).lower() for tag in meta.tags),
+                *meta.tags,
+            )
+        )
         if selected_category not in {"", "all"} and selected_category not in {meta.category, *meta.tags}:
             continue
         if query_text and query_text not in haystack:
@@ -179,3 +211,11 @@ def filter_fonts(fonts: list[str], *, category: str = "all", query: str = "") ->
         results.append(font_name)
 
     return results
+
+
+def font_category_label(category: str) -> str:
+    return FONT_CATEGORY_LABELS.get(str(category or "").strip().lower(), str(category or "").strip() or "Unknown")
+
+
+def font_category_options() -> list[tuple[str, str]]:
+    return [(font_category_label(category), category) for category in FONT_CATEGORIES]

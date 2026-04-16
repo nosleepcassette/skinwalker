@@ -2,6 +2,8 @@
 
 Skinwalker is a Textual-based TUI for creating, editing, previewing, and activating Hermes CLI skins.
 
+This repository now also includes `imagewalker`, a standalone local image-to-ASCII tool built on the same rendering stack as Skinwalker's Art tab.
+
 It is aimed at the full Hermes skin surface rather than a toy theme picker. The app reads real built-in skins from Hermes, edits the real skin schema, saves custom skins into the active Hermes home, and previews the result as terminal-native output plus generated YAML.
 
 ![cassette-ful skin — identity tab](skinwalker.png)
@@ -35,15 +37,19 @@ The current app supports:
 - YAML export to a target path
 - logo generation from text via `pyfiglet`
 - image-to-ASCII hero generation from an image path via Pillow
+- a dedicated `Image Lab` workflow in the Art tab plus a standalone `imagewalker` app
 - palette presets with live swatch preview
 - direct color editing with target selectors and adjustment actions
 - palette import from pasted text or a file path
 - spinner preset shelf with waiting/thinking/wings bundles
 - logo and hero generation controls for justification and flexible vs fixed-width output
-- hero generation controls for brightness, contrast, invert, threshold, sharpen, and edge blend
+- hero generation controls for brightness, contrast, saturation, hue shift, grayscale mix, sepia, invert, threshold, sharpen, edge blend, dithering, space density, and output padding
+- logo and hero ASCII export to `.txt`
+- logo and hero PNG export from generated markup
 - logo and hero art import from text or a file path
-- categorized and searchable font browser for logo generation
-- live preview for the highlighted logo font
+- categorized and searchable font browser for logo generation with human-readable style groups
+- live logo preview in the main Preview pane while logo controls are focused
+- preview-time alignment for left / center / right logo and hero rendering against the actual preview borders
 - emoji and symbol picker for spinner, prompt, tool, and art text fields
 - focused-field select-all, clear, and reset helpers
 - app-level undo and redo across draft and transient editor state
@@ -57,11 +63,11 @@ The current app supports:
 
 This repository is in the "upgraded working beta" stage.
 
-The app now covers the major foundation and workflow gaps from the initial MVP. The largest remaining work is around deeper image-lab parity, richer color UX, and further polish:
+The app now covers the major foundation and workflow gaps from the initial MVP. The largest remaining work is around deeper Hermes-side responsive art support, richer color UX, and further polish:
 
 - a fuller color-picker and contrast-audit workflow
-- favorites/recents and richer font browsing beyond category heuristics
-- a more capable hero/image lab with dithering and image preview
+- favorites/recents and richer font browsing beyond current category heuristics
+- responsive runtime hero rendering in Hermes itself rather than only static saved art
 - async/non-blocking AI execution
 - broader preview parity and regression coverage
 
@@ -107,11 +113,46 @@ After install, run from anywhere:
 skinwalker
 ```
 
+The same install also exposes the standalone image tool:
+
+```zsh
+imagewalker
+```
+
 Useful non-TUI check:
 
 ```zsh
 skinwalker --dump-active
 ```
+
+For local repo-driven development, the repository also includes a wrapper script at `bin/imagewalker`. A simple symlink works too:
+
+```zsh
+mkdir -p ~/.bin
+ln -sf "$PWD/bin/imagewalker" ~/.bin/imagewalker
+```
+
+## Imagewalker
+
+`imagewalker` is the standalone image-to-ASCII app that powers the richer image workflow.
+
+Current standalone capabilities:
+
+- live Textual UI with source pane, controls pane, and output pane
+- CLI render-to-stdout mode via `imagewalker /path/to/image.png --print`
+- 20-400 character widths
+- named gradients including `ascii`, `minimal`, `dots`, `alphabetic`, `alphanumeric`, `normal`, `normal2`, `extended`, `grayscale`, `math`, `arrow`, `blockelement`, and `braille`
+- dithering modes: `none`, `floyd-steinberg`, `atkinson`, `jjn`, and `stucki`
+- brightness, contrast, saturation, hue, grayscale, sepia, invert, threshold, sharpening, edge intensity, space density, and transparent-frame controls
+- TXT export, PNG export, and clipboard copy
+
+Example CLI usage:
+
+```zsh
+imagewalker ~/Pictures/test.png --print --characters 160 --gradient minimal --dither floyd-steinberg
+```
+
+From Skinwalker, the Art tab now includes an `Open Imagewalker` button so you can jump directly into the standalone lab from the current image path.
 
 ## Hermes Patch
 
@@ -177,7 +218,7 @@ The TUI is organized into three panes:
 - identity tab
 - colors tab
 - spinner tab
-- art tab
+- art tab with logo generator, Image Lab hero workflow, text/PNG export, and `Open Imagewalker`
 - AI tab
 
 ## Architecture Overview
@@ -202,11 +243,15 @@ Core modules:
   - terminal-native preview rendering
 - [src/skinwalker/__main__.py](src/skinwalker/__main__.py)
   - CLI entry point
+- [src/imagewalker/](src/imagewalker)
+  - standalone image-to-ASCII engine, Textual UI, export helpers, and CLI
 
 ## Repository Layout
 
 - [src/](src)
   - Python package
+- [bin/imagewalker](bin/imagewalker)
+  - local wrapper script for running the standalone app from the repo
 - [ROADMAP.md](ROADMAP.md)
   - high-level phased roadmap
 - [SKINWALKER_UPGRADE_PLAN.md](SKINWALKER_UPGRADE_PLAN.md)
@@ -224,7 +269,7 @@ Current known limitations include:
 
 - no dedicated TUI integration tests yet; the current suite is unit-level
 - the current font browser is categorized and previewable, but not yet favorites/recents driven
-- the hero generator is stronger, but still much smaller than the planned image lab
+- Skinwalker stores static logo and hero markup; true responsive hero reflow across different tmux pane widths needs Hermes runtime support
 - preview fidelity is broader than before but still not exhaustive for all Hermes runtime states
 - AI generation currently runs synchronously and can block the UI while a backend responds
 

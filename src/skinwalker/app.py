@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
 from typing import Callable
 
 from rich.text import Text
+from textual import events
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
@@ -25,13 +30,15 @@ from .ai import (
 )
 from .art import (
     HERO_STYLE_MAP,
+    _export_ascii_png,
+    _export_markup_text,
     generate_hero_markup,
     generate_logo_result,
     import_art_file,
     import_art_text,
     list_logo_fonts,
 )
-from .fonts import FONT_CATEGORIES, filter_fonts, font_meta
+from .fonts import filter_fonts, font_category_label, font_category_options, font_meta
 from .hermes import HermesBridge, LibraryEntry
 from .history import DraftHistory
 from .model import (
@@ -106,6 +113,7 @@ SELECT_DEFAULTS = {
     "logo-justify": "left",
     "logo-fit": "flexible",
     "hero-style": "braille",
+    "hero-dither": "none",
     "hero-invert": "off",
     "hero-import-mode": "plain",
     "hero-justify": "left",
@@ -118,15 +126,25 @@ INPUT_DEFAULTS = {
     "palette-file-path": "",
     "logo-width": "120",
     "logo-file-path": "",
+    "logo-export-path": "",
+    "logo-export-png-path": "",
     "logo-style": "standard",
     "logo-font-filter": "",
     "hero-path": "",
     "hero-width": "40",
     "hero-brightness": "100",
     "hero-contrast": "100",
+    "hero-saturation": "1.0",
+    "hero-hue-shift": "0.0",
+    "hero-grayscale": "100",
+    "hero-sepia": "0.0",
     "hero-threshold": "",
     "hero-sharpen": "100",
+    "hero-space-density": "0.0",
+    "hero-padding": "0",
     "hero-file-path": "",
+    "hero-export-text-path": "",
+    "hero-export-path": "",
 }
 
 TEXTAREA_DEFAULTS = {
@@ -151,6 +169,7 @@ TRANSIENT_SELECT_IDS = {
     "logo-justify",
     "logo-fit",
     "hero-style",
+    "hero-dither",
     "hero-invert",
     "hero-import-mode",
     "hero-justify",
@@ -165,15 +184,25 @@ TRANSIENT_INPUT_IDS = {
     "logo-title",
     "logo-width",
     "logo-file-path",
+    "logo-export-path",
+    "logo-export-png-path",
     "logo-style",
     "logo-font-filter",
     "hero-path",
     "hero-width",
     "hero-brightness",
     "hero-contrast",
+    "hero-saturation",
+    "hero-hue-shift",
+    "hero-grayscale",
+    "hero-sepia",
     "hero-threshold",
     "hero-sharpen",
+    "hero-space-density",
+    "hero-padding",
     "hero-file-path",
+    "hero-export-text-path",
+    "hero-export-path",
 }
 
 TRANSIENT_TEXTAREA_IDS = {
@@ -194,6 +223,7 @@ MODIFIED_TRANSIENT_SELECT_IDS = {
     "logo-justify",
     "logo-fit",
     "hero-style",
+    "hero-dither",
     "hero-invert",
     "hero-import-mode",
     "hero-justify",
@@ -208,15 +238,25 @@ MODIFIED_TRANSIENT_INPUT_IDS = {
     "logo-title",
     "logo-width",
     "logo-file-path",
+    "logo-export-path",
+    "logo-export-png-path",
     "logo-style",
     "logo-font-filter",
     "hero-path",
     "hero-width",
     "hero-brightness",
     "hero-contrast",
+    "hero-saturation",
+    "hero-hue-shift",
+    "hero-grayscale",
+    "hero-sepia",
     "hero-threshold",
     "hero-sharpen",
+    "hero-space-density",
+    "hero-padding",
     "hero-file-path",
+    "hero-export-text-path",
+    "hero-export-path",
 }
 
 MODIFIED_TRANSIENT_TEXTAREA_IDS = {
@@ -830,7 +870,7 @@ class SkinwalkerApp(App[None]):
     }
 
     #logo-font-preview {
-        height: 12;
+        height: auto;
         padding: 1;
         border: solid $surface;
         margin-bottom: 1;
@@ -896,6 +936,7 @@ class SkinwalkerApp(App[None]):
         self._preview_show_hero: bool = True
         self._preview_compact: bool = False
         self._preview_native: bool = False
+        self._preview_live_logo: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -1048,13 +1089,13 @@ class SkinwalkerApp(App[None]):
                             yield Static("Current font", classes="field-label")
                             yield Input(id="logo-style", placeholder="standard")
                             yield Static("Font category", classes="field-label")
-                            yield Select(_select_options(FONT_CATEGORIES), id="logo-font-category", allow_blank=False, value="all")
+                            yield Select(font_category_options(), id="logo-font-category", allow_blank=False, value="all")
                             yield Static("Font browser filter", classes="field-label")
-                            yield Input(id="logo-font-filter", placeholder="standard, slant, doom")
+                            yield Input(id="logo-font-filter", placeholder="slanted, retro, block, script")
                             yield Static("Font browser", classes="field-label")
                             yield OptionList(id="logo-font-list")
                             yield Static("", id="logo-font-meta")
-                            yield Static("", id="logo-font-preview")
+                            yield Static("Live logo preview appears in the Preview tab while logo controls are focused.", id="logo-font-preview")
                             yield Static("Logo justification", classes="field-label")
                             yield Select(_select_options(JUSTIFY_OPTIONS), id="logo-justify", allow_blank=False, value="left")
                             yield Static("Logo width mode", classes="field-label")
@@ -1062,6 +1103,13 @@ class SkinwalkerApp(App[None]):
                             with Horizontal(classes="button-row"):
                                 yield Button("Generate Logo", id="generate-logo")
                                 yield Button("Clear Logo", id="clear-logo", classes="tiny-button")
+                            yield Static("Logo export TXT path", classes="field-label")
+                            yield Input(id="logo-export-path", placeholder="~/art/logo.txt")
+                            yield Static("Logo export PNG path", classes="field-label")
+                            yield Input(id="logo-export-png-path", placeholder="~/art/logo.png")
+                            with Horizontal(classes="button-row"):
+                                yield Button("Export Logo TXT", id="export-logo-text")
+                                yield Button("Export Logo PNG", id="export-logo-png")
                             yield Static("Logo import mode", classes="field-label")
                             yield Select(_select_options(IMPORT_MODE_OPTIONS), id="logo-import-mode", allow_blank=False, value="plain")
                             yield Static("Logo file path", classes="field-label")
@@ -1073,17 +1121,34 @@ class SkinwalkerApp(App[None]):
                             yield TextArea("", id="logo-import")
                             yield Static("Banner logo markup", classes="field-label")
                             yield TextArea("", id="banner-logo")
-                            yield Static("Hero Generator", classes="section-title")
+                            yield Static("Image Lab", classes="section-title")
                             yield Static("Hero image path", classes="field-label")
                             yield Input(id="hero-path", placeholder="~/Pictures/hero.png")
-                            yield Static("Hero style", classes="field-label")
+                            with Horizontal(classes="button-row"):
+                                yield Button("Open Imagewalker", id="launch-imagewalker")
+                            yield Static("Character set", classes="field-label")
                             yield Select(_select_options(sorted(HERO_STYLE_MAP)), id="hero-style", allow_blank=False, value="braille")
+                            yield Static("Dither algorithm", classes="field-label")
+                            yield Select(
+                                [("None", "none"), ("Floyd-Steinberg", "floyd-steinberg"), ("Atkinson", "atkinson"), ("JJN", "jjn"), ("Stucki", "stucki")],
+                                id="hero-dither",
+                                allow_blank=False,
+                                value="none",
+                            )
                             yield Static("Hero width", classes="field-label")
                             yield Input(id="hero-width", placeholder="40")
                             yield Static("Hero brightness %", classes="field-label")
                             yield Input(id="hero-brightness", placeholder="100")
                             yield Static("Hero contrast %", classes="field-label")
                             yield Input(id="hero-contrast", placeholder="100")
+                            yield Static("Saturation", classes="field-label")
+                            yield Input(id="hero-saturation", placeholder="1.0")
+                            yield Static("Hue shift (0-360°)", classes="field-label")
+                            yield Input(id="hero-hue-shift", placeholder="0.0")
+                            yield Static("Grayscale %", classes="field-label")
+                            yield Input(id="hero-grayscale", placeholder="100")
+                            yield Static("Sepia (0-1.0)", classes="field-label")
+                            yield Input(id="hero-sepia", placeholder="0.0")
                             yield Static("Hero invert", classes="field-label")
                             yield Select(_select_options(["off", "on"]), id="hero-invert", allow_blank=False, value="off")
                             yield Static("Hero threshold (blank = off)", classes="field-label")
@@ -1092,6 +1157,10 @@ class SkinwalkerApp(App[None]):
                             yield Input(id="hero-sharpen", placeholder="100")
                             yield Static("Hero edge blend", classes="field-label")
                             yield Select(_select_options(["off", "on"]), id="hero-edge", allow_blank=False, value="off")
+                            yield Static("Space density (-1.0-1.0)", classes="field-label")
+                            yield Input(id="hero-space-density", placeholder="0.0")
+                            yield Static("Output padding (lines)", classes="field-label")
+                            yield Input(id="hero-padding", placeholder="0")
                             yield Static("Hero justification", classes="field-label")
                             yield Select(_select_options(JUSTIFY_OPTIONS), id="hero-justify", allow_blank=False, value="left")
                             yield Static("Hero width mode", classes="field-label")
@@ -1099,6 +1168,14 @@ class SkinwalkerApp(App[None]):
                             with Horizontal(classes="button-row"):
                                 yield Button("Generate Hero", id="generate-hero")
                                 yield Button("Clear Hero", id="clear-hero", classes="tiny-button")
+                            yield Static("Hero export TXT path", classes="field-label")
+                            yield Input(id="hero-export-text-path", placeholder="~/art/hero.txt")
+                            with Horizontal(classes="button-row"):
+                                yield Button("Export Hero TXT", id="export-hero-text")
+                            yield Static("Hero export PNG path", classes="field-label")
+                            yield Input(id="hero-export-path", placeholder="~/art/hero.png")
+                            with Horizontal(classes="button-row"):
+                                yield Button("Export Hero PNG", id="export-hero-png")
                             yield Static("Hero import mode", classes="field-label")
                             yield Select(_select_options(IMPORT_MODE_OPTIONS), id="hero-import-mode", allow_blank=False, value="plain")
                             yield Static("Hero art file path", classes="field-label")
@@ -1155,6 +1232,18 @@ class SkinwalkerApp(App[None]):
 
     def _selected_ai_backend(self) -> str:
         return str(self.query_one("#ai-backend", Select).value or self.ai_backends[0])
+
+    def _float_input(self, widget_id: str, default: float) -> float:
+        try:
+            return float(self.query_one(f"#{widget_id}", Input).value.strip())
+        except (ValueError, AttributeError):
+            return default
+
+    def _int_input(self, widget_id: str, default: int) -> int:
+        try:
+            return int(self.query_one(f"#{widget_id}", Input).value.strip())
+        except (ValueError, AttributeError):
+            return default
 
     def _toast(self, text: str) -> None:
         try:
@@ -1299,24 +1388,18 @@ class SkinwalkerApp(App[None]):
         self._restoring_history = False
 
     def _refresh_logo_font_preview(self) -> None:
-        title = self.query_one("#logo-title", Input).value.strip() or "Skinwalker"
-        width_text = self.query_one("#logo-width", Input).value.strip() or INPUT_DEFAULTS["logo-width"]
-        style = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
-        justify = str(self.query_one("#logo-justify", Select).value or SELECT_DEFAULTS["logo-justify"])
-        fit = str(self.query_one("#logo-fit", Select).value or SELECT_DEFAULTS["logo-fit"])
-
         try:
-            result = generate_logo_result(title, style, self._logo_color(), width=int(width_text), justify=justify, fit=fit)
+            result = self._current_logo_result()
         except Exception as exc:
             meta_text = f"Preview unavailable: {exc}"
-            preview_renderable: Text | str = Text("")
+            preview_renderable: Text | str = Text("Focus the logo controls to preview the rendered banner in the Preview tab.")
         else:
             meta = font_meta(result.font)
             meta_text = (
-                f"Font: {result.font} | Category: {meta.category} | "
-                f"Tags: {', '.join(meta.tags)} | Size: {result.width}x{result.height}"
+                f"Font: {result.font} | Category: {font_category_label(meta.category)} | "
+                f"Tags: {', '.join(font_category_label(tag) for tag in meta.tags)} | Size: {result.width}x{result.height}"
             )
-            preview_renderable = Text.from_markup(result.markup) if result.markup else Text("")
+            preview_renderable = Text("Live logo preview is rendered in the main Preview tab.")
 
         self.query_one("#logo-font-meta", Static).update(meta_text)
         self.query_one("#logo-font-preview", Static).update(preview_renderable)
@@ -1343,6 +1426,22 @@ class SkinwalkerApp(App[None]):
         if highlighted.id and highlighted.id != "__empty__":
             self.query_one("#logo-style", Input).value = highlighted.id
         self._refresh_logo_font_preview()
+
+    def _current_logo_result(self):
+        title = (
+            self.query_one("#logo-title", Input).value.strip()
+            or self.query_one("#agent-name", Input).value.strip()
+            or self.draft.get("name", "").strip()
+            or "logo"
+        )
+        width_text = self.query_one("#logo-width", Input).value.strip() or INPUT_DEFAULTS["logo-width"]
+        style = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
+        justify = str(self.query_one("#logo-justify", Select).value or SELECT_DEFAULTS["logo-justify"])
+        fit = str(self.query_one("#logo-fit", Select).value or SELECT_DEFAULTS["logo-fit"])
+        return generate_logo_result(title, style, self._logo_color(), width=int(width_text), justify=justify, fit=fit)
+
+    def _logo_preview_active(self) -> bool:
+        return self._preview_live_logo
 
     def _apply_color_mapping(self, colors: dict[str, str], *, origin: str) -> None:
         self.draft.setdefault("colors", {}).update(colors)
@@ -1713,6 +1812,8 @@ class SkinwalkerApp(App[None]):
 
         set_input("logo-title", branding.get("agent_name") or draft.get("name", ""))
         set_input("logo-width", INPUT_DEFAULTS["logo-width"])
+        set_input("logo-export-path", INPUT_DEFAULTS["logo-export-path"])
+        set_input("logo-export-png-path", INPUT_DEFAULTS["logo-export-png-path"])
         set_input("logo-style", INPUT_DEFAULTS["logo-style"])
         set_select("logo-font-category", SELECT_DEFAULTS["logo-font-category"])
         set_input("logo-font-filter", INPUT_DEFAULTS["logo-font-filter"])
@@ -1725,17 +1826,26 @@ class SkinwalkerApp(App[None]):
 
         set_input("hero-path", "")
         set_select("hero-style", SELECT_DEFAULTS["hero-style"])
+        set_select("hero-dither", SELECT_DEFAULTS["hero-dither"])
         set_input("hero-width", INPUT_DEFAULTS["hero-width"])
         set_input("hero-brightness", INPUT_DEFAULTS["hero-brightness"])
         set_input("hero-contrast", INPUT_DEFAULTS["hero-contrast"])
+        set_input("hero-saturation", INPUT_DEFAULTS["hero-saturation"])
+        set_input("hero-hue-shift", INPUT_DEFAULTS["hero-hue-shift"])
+        set_input("hero-grayscale", INPUT_DEFAULTS["hero-grayscale"])
+        set_input("hero-sepia", INPUT_DEFAULTS["hero-sepia"])
         set_select("hero-invert", SELECT_DEFAULTS["hero-invert"])
         set_input("hero-threshold", INPUT_DEFAULTS["hero-threshold"])
         set_input("hero-sharpen", INPUT_DEFAULTS["hero-sharpen"])
         set_select("hero-edge", SELECT_DEFAULTS["hero-edge"])
+        set_input("hero-space-density", INPUT_DEFAULTS["hero-space-density"])
+        set_input("hero-padding", INPUT_DEFAULTS["hero-padding"])
         set_select("hero-justify", SELECT_DEFAULTS["hero-justify"])
         set_select("hero-fit", SELECT_DEFAULTS["hero-fit"])
         set_select("hero-import-mode", SELECT_DEFAULTS["hero-import-mode"])
-        set_input("hero-file-path", "")
+        set_input("hero-file-path", INPUT_DEFAULTS["hero-file-path"])
+        set_input("hero-export-text-path", INPUT_DEFAULTS["hero-export-text-path"])
+        set_input("hero-export-path", INPUT_DEFAULTS["hero-export-path"])
         set_textarea("hero-import", "")
         set_textarea("banner-hero", draft.get("banner_hero", ""))
 
@@ -1749,6 +1859,12 @@ class SkinwalkerApp(App[None]):
     def _refresh_preview(self) -> None:
         preview_skin = merge_skin(self.default_skin, self.draft)
         preview_error: str | None = None
+        logo_override = None
+        if self._logo_preview_active():
+            try:
+                logo_override = self._current_logo_result().markup
+            except Exception:
+                logo_override = None
 
         try:
             preview_renderable = render_skin_preview(
@@ -1757,6 +1873,9 @@ class SkinwalkerApp(App[None]):
                 show_hero=self._preview_show_hero,
                 compact=self._preview_compact,
                 native_colors=self._preview_native,
+                logo_override=logo_override,
+                logo_justify=str(self.query_one("#logo-justify", Select).value or SELECT_DEFAULTS["logo-justify"]),
+                hero_justify=str(self.query_one("#hero-justify", Select).value or SELECT_DEFAULTS["hero-justify"]),
             )
         except Exception as exc:
             preview_renderable = render_skin_preview(self.default_skin)
@@ -2309,7 +2428,7 @@ class SkinwalkerApp(App[None]):
         if event.input.id in TRANSIENT_INPUT_IDS:
             if event.input.id in {"logo-title", "logo-width", "logo-style", "logo-font-filter"}:
                 self._refresh_logo_font_browser()
-            if event.input.id.startswith("hero-") or event.input.id in {"logo-title", "logo-width", "logo-style"}:
+            if event.input.id.startswith("hero-") or event.input.id in {"logo-title", "logo-width", "logo-style", "logo-font-filter"}:
                 self._refresh_preview()
             self._sync_modified_indicators()
             self._record_history(f"Edit {event.input.id}")
@@ -2335,10 +2454,11 @@ class SkinwalkerApp(App[None]):
             return
         if event.select.id in {"logo-font-category", "logo-justify", "logo-fit"}:
             self._refresh_logo_font_browser()
+            self._refresh_preview()
             self._sync_modified_indicators()
             self._record_history(f"Select {event.select.id}")
             return
-        if event.select.id in {"profile-target", "yaml-import-mode", "hero-style", "hero-invert", "hero-justify", "hero-fit", "hero-edge", "hero-import-mode", "logo-import-mode"}:
+        if event.select.id in {"profile-target", "yaml-import-mode", "hero-style", "hero-dither", "hero-invert", "hero-justify", "hero-fit", "hero-edge", "hero-import-mode", "logo-import-mode"}:
             self._refresh_preview()
             self._sync_modified_indicators()
             self._record_history(f"Select {event.select.id}")
@@ -2346,6 +2466,23 @@ class SkinwalkerApp(App[None]):
         if event.select.id in TRANSIENT_SELECT_IDS:
             self._sync_modified_indicators()
             self._record_history(f"Select {event.select.id}")
+
+    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+        widget_id = getattr(event.widget, "id", "") or ""
+        preview_logo_ids = {
+            "logo-title",
+            "logo-width",
+            "logo-style",
+            "logo-font-filter",
+            "logo-font-category",
+            "logo-justify",
+            "logo-fit",
+            "logo-font-list",
+        }
+        live_logo = widget_id in preview_logo_ids
+        if live_logo != self._preview_live_logo:
+            self._preview_live_logo = live_logo
+            self._refresh_preview()
 
     def on_wing_pair_editor_changed(self, event: WingPairEditor.Changed) -> None:
         if self._populating_form or self._restoring_history:
@@ -2375,6 +2512,8 @@ class SkinwalkerApp(App[None]):
             if option.id and option.id != "__empty__":
                 self.query_one("#logo-style", Input).value = option.id
                 self._set_status(f"Selected logo font {option.id}")
+                self._refresh_logo_font_preview()
+                self._refresh_preview()
             return
         entry = self.library_entries[event.option_index]
         if entry.name == self.current_name and entry.source == self.current_source:
@@ -2451,6 +2590,10 @@ class SkinwalkerApp(App[None]):
         elif button_id == "clear-logo":
             self._set_art_field("banner_logo", "banner-logo", "")
             self._set_status("Cleared logo art")
+        elif button_id == "export-logo-text":
+            self.action_export_logo_text()
+        elif button_id == "export-logo-png":
+            self.action_export_logo_png()
         elif button_id == "import-logo-text":
             self.action_import_logo_text()
         elif button_id == "import-logo-file":
@@ -2460,6 +2603,12 @@ class SkinwalkerApp(App[None]):
         elif button_id == "clear-hero":
             self._set_art_field("banner_hero", "banner-hero", "")
             self._set_status("Cleared hero art")
+        elif button_id == "export-hero-text":
+            self.action_export_hero_text()
+        elif button_id == "export-hero-png":
+            self.action_export_hero_png()
+        elif button_id == "launch-imagewalker":
+            self.action_launch_imagewalker()
         elif button_id == "import-hero-text":
             self.action_import_hero_text()
         elif button_id == "import-hero-file":
@@ -2664,20 +2813,11 @@ class SkinwalkerApp(App[None]):
         self.action_refresh_library()
 
     def action_generate_logo(self) -> None:
-        title = (
-            self.query_one("#logo-title", Input).value.strip()
-            or self.query_one("#agent-name", Input).value.strip()
-            or self.draft.get("name", "").strip()
-            or "logo"
-        )
-        width_text = self.query_one("#logo-width", Input).value.strip() or INPUT_DEFAULTS["logo-width"]
-        style = self.query_one("#logo-style", Input).value.strip() or INPUT_DEFAULTS["logo-style"]
         justify = str(self.query_one("#logo-justify", Select).value) or SELECT_DEFAULTS["logo-justify"]
         fit = str(self.query_one("#logo-fit", Select).value) or SELECT_DEFAULTS["logo-fit"]
-        color = self._logo_color()
 
         try:
-            result = generate_logo_result(title, style, color, width=int(width_text), justify=justify, fit=fit)
+            result = self._current_logo_result()
         except Exception as exc:
             self._set_status(f"Logo generation failed: {exc}")
             return
@@ -2685,15 +2825,42 @@ class SkinwalkerApp(App[None]):
         self._set_art_field("banner_logo", "banner-logo", result.markup)
         self._set_status(f"Generated logo using {result.font} at {result.width}x{result.height} ({justify}, {fit})")
 
+    def action_export_logo_text(self) -> None:
+        logo_markup = self.draft.get("banner_logo", "")
+        if not logo_markup:
+            self._set_status("No logo art to export")
+            return
+        path_input = self.query_one("#logo-export-path", Input).value.strip()
+        if not path_input:
+            self._set_status("Set logo TXT export path first")
+            return
+        try:
+            _export_markup_text(logo_markup, path_input)
+            self._set_status(f"Exported logo TXT -> {path_input}")
+        except Exception as exc:
+            self._set_status(f"Logo TXT export failed: {exc}")
+
+    def action_export_logo_png(self) -> None:
+        logo_markup = self.draft.get("banner_logo", "")
+        if not logo_markup:
+            self._set_status("No logo art to export")
+            return
+        path_input = self.query_one("#logo-export-png-path", Input).value.strip()
+        if not path_input:
+            self._set_status("Set logo PNG export path first")
+            return
+        try:
+            _export_ascii_png(logo_markup, path_input)
+            self._set_status(f"Exported logo PNG -> {path_input}")
+        except Exception as exc:
+            self._set_status(f"Logo PNG export failed: {exc}")
+
     def action_generate_hero(self) -> None:
         image_path = self.query_one("#hero-path", Input).value.strip()
         style = str(self.query_one("#hero-style", Select).value) or SELECT_DEFAULTS["hero-style"]
-        width_text = self.query_one("#hero-width", Input).value.strip() or INPUT_DEFAULTS["hero-width"]
-        brightness_text = self.query_one("#hero-brightness", Input).value.strip() or INPUT_DEFAULTS["hero-brightness"]
-        contrast_text = self.query_one("#hero-contrast", Input).value.strip() or INPUT_DEFAULTS["hero-contrast"]
+        dither = str(self.query_one("#hero-dither", Select).value) or SELECT_DEFAULTS["hero-dither"]
         invert = str(self.query_one("#hero-invert", Select).value or "off") == "on"
         threshold_text = self.query_one("#hero-threshold", Input).value.strip()
-        sharpen_text = self.query_one("#hero-sharpen", Input).value.strip() or INPUT_DEFAULTS["hero-sharpen"]
         edge_strength = 0.35 if str(self.query_one("#hero-edge", Select).value or "off") == "on" else 0.0
         justify = str(self.query_one("#hero-justify", Select).value) or SELECT_DEFAULTS["hero-justify"]
         fit = str(self.query_one("#hero-fit", Select).value) or SELECT_DEFAULTS["hero-fit"]
@@ -2703,16 +2870,23 @@ class SkinwalkerApp(App[None]):
             result = generate_hero_markup(
                 image_path,
                 style,
-                int(width_text),
+                self._int_input("hero-width", int(INPUT_DEFAULTS["hero-width"])),
                 color,
                 justify=justify,
                 fit=fit,
-                brightness=max(0.1, float(brightness_text) / 100.0),
-                contrast=max(0.1, float(contrast_text) / 100.0),
+                brightness=max(0.1, self._float_input("hero-brightness", float(INPUT_DEFAULTS["hero-brightness"])) / 100.0),
+                contrast=max(0.1, self._float_input("hero-contrast", float(INPUT_DEFAULTS["hero-contrast"])) / 100.0),
                 invert=invert,
-                threshold=int(threshold_text) if threshold_text else None,
-                sharpen=max(0.1, float(sharpen_text) / 100.0),
+                threshold=self._int_input("hero-threshold", 0) if threshold_text else None,
+                sharpen=max(0.1, self._float_input("hero-sharpen", float(INPUT_DEFAULTS["hero-sharpen"])) / 100.0),
                 edge_strength=edge_strength,
+                saturation=max(0.0, self._float_input("hero-saturation", float(INPUT_DEFAULTS["hero-saturation"]))),
+                hue_shift=self._float_input("hero-hue-shift", float(INPUT_DEFAULTS["hero-hue-shift"])),
+                grayscale_blend=max(0.0, self._float_input("hero-grayscale", float(INPUT_DEFAULTS["hero-grayscale"]))) / 100.0,
+                sepia=self._float_input("hero-sepia", float(INPUT_DEFAULTS["hero-sepia"])),
+                space_density=self._float_input("hero-space-density", float(INPUT_DEFAULTS["hero-space-density"])),
+                dither=dither,
+                padding=max(0, self._int_input("hero-padding", int(INPUT_DEFAULTS["hero-padding"]))),
             )
         except Exception as exc:
             self._set_status(f"Hero generation failed: {exc}")
@@ -2720,3 +2894,51 @@ class SkinwalkerApp(App[None]):
 
         self._set_art_field("banner_hero", "banner-hero", result.markup)
         self._set_status(f"Generated {result.style} hero art at {result.width}x{result.height} ({justify}, {fit})")
+
+    def action_export_hero_text(self) -> None:
+        hero_markup = self.draft.get("banner_hero", "")
+        if not hero_markup:
+            self._set_status("No hero art to export")
+            return
+        path_input = self.query_one("#hero-export-text-path", Input).value.strip()
+        if not path_input:
+            self._set_status("Set hero TXT export path first")
+            return
+        try:
+            _export_markup_text(hero_markup, path_input)
+            self._set_status(f"Exported hero TXT -> {path_input}")
+        except Exception as exc:
+            self._set_status(f"Hero TXT export failed: {exc}")
+
+    def action_export_hero_png(self) -> None:
+        hero_markup = self.draft.get("banner_hero", "")
+        if not hero_markup:
+            self._set_status("No hero art to export")
+            return
+        path_input = self.query_one("#hero-export-path", Input).value.strip()
+        if not path_input:
+            self._set_status("Set export path first")
+            return
+        try:
+            _export_ascii_png(hero_markup, path_input)
+            self._set_status(f"Exported hero PNG -> {path_input}")
+        except Exception as exc:
+            self._set_status(f"Export failed: {exc}")
+
+    def action_launch_imagewalker(self) -> None:
+        launcher = shutil.which("imagewalker")
+        if launcher:
+            command = [launcher]
+        else:
+            command = [sys.executable, "-m", "imagewalker"]
+        image_path = self.query_one("#hero-path", Input).value.strip()
+        if image_path:
+            command.append(image_path)
+        env = dict(os.environ)
+        src_root = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = f"{src_root}:{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_root
+        try:
+            subprocess.Popen(command, cwd=str(Path(__file__).resolve().parents[2]), env=env)
+            self._set_status("Launched Imagewalker")
+        except Exception as exc:
+            self._set_status(f"Launch failed: {exc}")
