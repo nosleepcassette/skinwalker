@@ -16,29 +16,44 @@ def _render_markup_block(markup: str, fallback_style: str = "") -> Text:
         return Text(markup, style=fallback_style)
 
 
-def render_skin_preview(skin: dict):
+def render_skin_preview(
+    skin: dict,
+    *,
+    show_logo: bool = True,
+    show_hero: bool = True,
+    compact: bool = False,
+    native_colors: bool = False,
+):
     colors = skin.get("colors") or {}
     branding = skin.get("branding") or {}
     spinner = skin.get("spinner") or {}
     tool_emojis = skin.get("tool_emojis") or {}
 
-    border = normalize_color_token(colors.get("banner_border", "#8EA3FF"), "#8EA3FF")
-    accent = normalize_color_token(colors.get("banner_accent", "#8EA3FF"), "#8EA3FF")
-    dim = normalize_color_token(colors.get("banner_dim", "#586789"), "#586789")
-    text_color = normalize_color_token(colors.get("banner_text", "#DCE4FF"), "#DCE4FF")
-    prompt_color = normalize_color_token(colors.get("prompt", text_color), text_color)
-    response_border = normalize_color_token(colors.get("response_border", "#60A5FA"), "#60A5FA")
-    ui_label = normalize_color_token(colors.get("ui_label", accent), accent)
-    ui_accent = normalize_color_token(colors.get("ui_accent", accent), accent)
+    # In native_colors mode all ANSI styling is stripped so the terminal's
+    # own color scheme shows through — useful for checking legibility on
+    # themes like Nord, Dracula, Catppuccin etc.
+    if native_colors:
+        border = accent = dim = text_color = prompt_color = ""
+        response_border = ui_label = ui_accent = ""
+        logo_color = ""
+    else:
+        border = normalize_color_token(colors.get("banner_border", "#8EA3FF"), "#8EA3FF")
+        accent = normalize_color_token(colors.get("banner_accent", "#8EA3FF"), "#8EA3FF")
+        dim = normalize_color_token(colors.get("banner_dim", "#586789"), "#586789")
+        text_color = normalize_color_token(colors.get("banner_text", "#DCE4FF"), "#DCE4FF")
+        prompt_color = normalize_color_token(colors.get("prompt", text_color), text_color)
+        response_border = normalize_color_token(colors.get("response_border", "#60A5FA"), "#60A5FA")
+        ui_label = normalize_color_token(colors.get("ui_label", accent), accent)
+        ui_accent = normalize_color_token(colors.get("ui_accent", accent), accent)
+        logo_color = normalize_color_token(colors.get("banner_title", accent), accent)
 
-    logo = _render_markup_block(skin.get("banner_logo", ""), normalize_color_token(colors.get("banner_title", accent), accent))
+    logo = _render_markup_block(skin.get("banner_logo", ""), logo_color)
     hero = _render_markup_block(skin.get("banner_hero", ""), accent)
 
     waiting_faces = spinner.get("waiting_faces") or ["◐"]
     thinking_faces = spinner.get("thinking_faces") or waiting_faces
     thinking_verbs = spinner.get("thinking_verbs") or ["thinking"]
     wings = spinner.get("wings") or [["‹", "›"]]
-    wing_left, wing_right = wings[0] if wings else ("", "")
     tool_prefix = str(skin.get("tool_prefix", "┊") or "┊")
 
     response_label = str(branding.get("response_label", " Hermes ")).strip() or "Hermes"
@@ -48,13 +63,15 @@ def render_skin_preview(skin: dict):
     welcome = str(branding.get("welcome", "") or "Ready when you are.")
     goodbye = str(branding.get("goodbye", "") or "Session complete.")
 
-    banner_body = Group(
+    banner_items = [
         Text("Session interactive CLI", style=accent),
         Text("Model gpt-5.4", style=dim),
         Text(f"Skin {skin.get('name', 'custom-skin')}", style=text_color),
         Text(welcome, style=text_color),
-        hero,
-    )
+    ]
+    if show_hero:
+        banner_items.append(hero)
+    banner_body = Group(*banner_items)
 
     waiting_lines = []
     for index, face in enumerate(waiting_faces[: min(3, len(waiting_faces))]):
@@ -84,35 +101,40 @@ def render_skin_preview(skin: dict):
         )
 
     tool_lines = []
-    tool_samples = {
-        "terminal": ("⚡", "ls ~/.hermes/skins"),
-        "web_search": ("🔎", "search for skin ergonomics"),
-        "web_extract": ("🌐", "extract page sections"),
-        "browser_navigate": ("🧭", "open preview target"),
-        "browser_click": ("🖱", "click apply button"),
-        "read_file": ("📄", "~/.hermes/skins/cass-ascii.yaml"),
-        "write_file": ("✎", "~/.hermes/skins/new-skin.yaml"),
-        "patch": ("🩹", "patch spinner presets"),
-        "todo": ("📝", "review remaining polish"),
-        "delegate_task": ("🔀", "hand off hero variations"),
-    }
-    for tool_name in TOOL_EMOJI_KEYS:
-        fallback_emoji, preview = tool_samples.get(tool_name, ("•", tool_name.replace("_", " ")))
-        tool_lines.append(
-            Text.assemble(
-                (f"{tool_prefix} ", ui_label),
-                (f"{tool_emojis.get(tool_name, fallback_emoji)} ", prompt_color),
-                (preview, text_color),
+    if not compact:
+        tool_samples = {
+            "terminal": ("⚡", "ls ~/.hermes/skins"),
+            "web_search": ("🔎", "search for skin ergonomics"),
+            "web_extract": ("🌐", "extract page sections"),
+            "browser_navigate": ("🧭", "open preview target"),
+            "browser_click": ("🖱", "click apply button"),
+            "read_file": ("📄", "~/.hermes/skins/cass-ascii.yaml"),
+            "write_file": ("✎", "~/.hermes/skins/new-skin.yaml"),
+            "patch": ("🩹", "patch spinner presets"),
+            "todo": ("📝", "review remaining polish"),
+            "delegate_task": ("🔀", "hand off hero variations"),
+        }
+        for tool_name in TOOL_EMOJI_KEYS:
+            fallback_emoji, preview_text = tool_samples.get(tool_name, ("•", tool_name.replace("_", " ")))
+            tool_lines.append(
+                Text.assemble(
+                    (f"{tool_prefix} ", ui_label),
+                    (f"{tool_emojis.get(tool_name, fallback_emoji)} ", prompt_color),
+                    (preview_text, text_color),
+                )
             )
-        )
 
     prompt_line = Text.assemble(
         (prompt_symbol, prompt_color),
         ("make the launch screen feel calmer", text_color),
     )
 
+    top_items = []
+    if show_logo:
+        top_items.append(logo)
+
     return Group(
-        logo,
+        *top_items,
         Panel(
             banner_body,
             title=agent_name,

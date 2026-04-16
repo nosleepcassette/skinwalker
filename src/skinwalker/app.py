@@ -9,6 +9,7 @@ from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, OptionList, Select, Static, TabPane, TabbedContent, TextArea
 from textual.widgets.option_list import Option
@@ -57,7 +58,7 @@ from .model import (
     parse_color_scheme,
     parse_skin_yaml,
     parse_multiline_list,
-    parse_wings_text,
+    sanitize_skin_name,
     unique_skin_name,
 )
 from .preview import render_color_preview, render_skin_preview
@@ -225,6 +226,12 @@ MODIFIED_TRANSIENT_TEXTAREA_IDS = {
     "hero-import",
 }
 
+WING_INPUT_PREFIXES = ("spinner-wing-left-", "spinner-wing-right-")
+SPINNER_PREVIEW_DOT_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+SPINNER_PREVIEW_INTERVAL = 0.12
+SPINNER_PREVIEW_PHASE_SECONDS = 3.0
+SPINNER_PREVIEW_PHASE_FRAMES = max(1, round(SPINNER_PREVIEW_PHASE_SECONDS / SPINNER_PREVIEW_INTERVAL))
+
 EMOJI_ENABLED_FIELDS = {
     "agent-name",
     "welcome",
@@ -236,7 +243,6 @@ EMOJI_ENABLED_FIELDS = {
     "spinner-waiting",
     "spinner-thinking",
     "spinner-verbs",
-    "spinner-wings",
     "logo-title",
     "logo-import",
     "banner-logo",
@@ -291,6 +297,248 @@ EMOJI_LIBRARY = {
 
 def _select_options(values: list[str]) -> list[tuple[str, str]]:
     return [(value, value) for value in values]
+
+
+def build_spinner_preview_snapshot(draft: dict) -> dict[str, object]:
+    colors = draft.get("colors") or {}
+    spinner = draft.get("spinner") or {}
+    wings = [
+        [str(pair[0]), str(pair[1])]
+        for pair in spinner.get("wings", [])
+        if isinstance(pair, (list, tuple)) and len(pair) == 2
+    ]
+
+    return {
+        "ui_accent": normalize_color_token(colors.get("ui_accent", "#8EA3FF"), "#8EA3FF"),
+        "banner_text": normalize_color_token(colors.get("banner_text", "#DCE4FF"), "#DCE4FF"),
+        "waiting_faces": [str(item) for item in spinner.get("waiting_faces", []) if str(item).strip()] or list(SPINNER_PREVIEW_DOT_FRAMES),
+        "thinking_faces": [str(item) for item in spinner.get("thinking_faces", []) if str(item).strip()] or list(SPINNER_PREVIEW_DOT_FRAMES),
+        "thinking_verbs": [str(item) for item in spinner.get("thinking_verbs", []) if str(item).strip()] or ["thinking"],
+        "wings": wings,
+    }
+
+
+def render_spinner_preview_frame(snapshot: dict[str, object], frame_index: int) -> Text:
+    ui_accent = str(snapshot.get("ui_accent", "#8EA3FF"))
+    banner_text = str(snapshot.get("banner_text", "#DCE4FF"))
+    waiting_faces = list(snapshot.get("waiting_faces", [])) or list(SPINNER_PREVIEW_DOT_FRAMES)
+    thinking_faces = list(snapshot.get("thinking_faces", [])) or list(SPINNER_PREVIEW_DOT_FRAMES)
+    thinking_verbs = list(snapshot.get("thinking_verbs", [])) or ["thinking"]
+    wings = list(snapshot.get("wings", []))
+
+    phase_index = frame_index // SPINNER_PREVIEW_PHASE_FRAMES
+    phase_frame = frame_index % SPINNER_PREVIEW_PHASE_FRAMES
+    waiting_phase = phase_index % 2 == 0
+
+    faces = waiting_faces if waiting_phase else thinking_faces
+    face = str(faces[phase_frame % len(faces)]) if faces else SPINNER_PREVIEW_DOT_FRAMES[phase_frame % len(SPINNER_PREVIEW_DOT_FRAMES)]
+    left, right = ("", "")
+    if wings:
+        pair = wings[phase_frame % len(wings)]
+        if len(pair) == 2:
+            left, right = str(pair[0]), str(pair[1])
+
+    rendered = Text()
+    if left:
+        rendered.append(f"{left} ", style=ui_accent)
+    rendered.append(face, style=f"bold {ui_accent}")
+    rendered.append(" ", style=ui_accent)
+
+    if waiting_phase:
+        rendered.append("⚡ running a tool", style=banner_text)
+        if right:
+            rendered.append(f" {right}", style=ui_accent)
+        rendered.append(f" ({phase_frame * SPINNER_PREVIEW_INTERVAL:.1f}s)", style=banner_text)
+        return rendered
+
+    verb = str(thinking_verbs[phase_frame % len(thinking_verbs)]) if thinking_verbs else "thinking"
+    rendered.append(f"{verb}...", style=banner_text)
+    if right:
+        rendered.append(f" {right}", style=ui_accent)
+    return rendered
+
+
+class PreviewSpinnerModal(ModalScreen[None]):
+    CSS = """
+    PreviewSpinnerModal {
+        align: center middle;
+    }
+
+    #spinner-preview-dialog {
+        width: 84;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: round $primary;
+    }
+
+    #spinner-preview-line {
+        margin: 1 0;
+        padding: 1;
+        border: solid $surface;
+    }
+    """
+
+    BINDINGS = [Binding("escape", "dismiss(None)", "Close")]
+
+    def __init__(self, draft: dict) -> None:
+        super().__init__()
+        self.snapshot = build_spinner_preview_snapshot(deepcopy(draft))
+        self._frame_index = 0
+        self._timer = None
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="spinner-preview-dialog"):
+            yield Static("Live Spinner Preview", classes="section-title")
+            yield Static("Snapshot from the current draft.", classes="field-label")
+            yield Static(id="spinner-preview-line")
+            with Horizontal(classes="button-row"):
+                yield Button("Stop", id="spinner-preview-stop")
+
+    def on_mount(self) -> None:
+        self._render_frame()
+        self._timer = self.set_interval(SPINNER_PREVIEW_INTERVAL, self._advance_frame)
+
+    def on_unmount(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+
+    def _advance_frame(self) -> None:
+        self._frame_index += 1
+        self._render_frame()
+
+    def _render_frame(self) -> None:
+        self.query_one("#spinner-preview-line", Static).update(render_spinner_preview_frame(self.snapshot, self._frame_index))
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "spinner-preview-stop":
+            self.dismiss(None)
+
+
+class WingPairEditor(Vertical):
+    DEFAULT_CSS = """
+    WingPairEditor {
+        border: round $surface;
+        padding: 1;
+        margin-bottom: 1;
+        height: auto;
+    }
+
+    WingPairEditor.modified {
+        border: round $warning;
+    }
+
+    WingPairEditor .wing-row {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    WingPairEditor .wing-input {
+        width: 1fr;
+    }
+
+    WingPairEditor .wing-separator {
+        width: 3;
+        content-align: center middle;
+        color: $text-muted;
+    }
+
+    WingPairEditor #spinner-wings-rows {
+        height: auto;
+        max-height: 10;
+    }
+
+    WingPairEditor #spinner-wings-preview {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    """
+
+    class Changed(Message):
+        def __init__(self, wings: list[list[str]]) -> None:
+            super().__init__()
+            self.wings = deepcopy(wings)
+
+    def __init__(self, wings: list[list[str]] | None = None, *, id: str | None = None) -> None:
+        super().__init__(id=id)
+        self._wings = self._normalize_wings(wings or [])
+
+    @staticmethod
+    def _normalize_wings(wings: list[list[str]]) -> list[list[str]]:
+        return [
+            [str(pair[0]), str(pair[1])]
+            for pair in wings
+            if isinstance(pair, (list, tuple)) and len(pair) == 2
+        ]
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="spinner-wings-rows"):
+            for index, (left, right) in enumerate(self._wings):
+                with Horizontal(classes="wing-row"):
+                    yield Input(value=left, placeholder="left", id=f"spinner-wing-left-{index}", classes="wing-input")
+                    yield Static("|", classes="wing-separator")
+                    yield Input(value=right, placeholder="right", id=f"spinner-wing-right-{index}", classes="wing-input")
+                    yield Button("×", id=f"spinner-wing-delete-{index}", classes="tiny-button")
+        yield Static(self._preview_text(), id="spinner-wings-preview")
+        yield Button("+ add pair", id="spinner-wing-add")
+
+    def _preview_text(self) -> Text:
+        if not self._wings:
+            return Text("Preview: add a pair to see it here")
+        left, right = self._wings[0]
+        return Text.assemble(
+            ("Preview: ", ""),
+            (left or "⟨left⟩", "bold"),
+            (" ", ""),
+            ("◐", "bold"),
+            (" ", ""),
+            (right or "⟨right⟩", "bold"),
+        )
+
+    def get_wings(self) -> list[list[str]]:
+        return deepcopy(self._wings)
+
+    def set_wings(self, wings: list[list[str]]) -> None:
+        self._wings = self._normalize_wings(wings)
+        if self.is_mounted:
+            self.refresh(recompose=True)
+
+    def _update_preview(self) -> None:
+        self.query_one("#spinner-wings-preview", Static).update(self._preview_text())
+
+    def _post_changed(self) -> None:
+        self.post_message(self.Changed(self.get_wings()))
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        widget_id = event.input.id or ""
+        if widget_id.startswith("spinner-wing-left-"):
+            index = int(widget_id.removeprefix("spinner-wing-left-"))
+            self._wings[index][0] = event.value
+        elif widget_id.startswith("spinner-wing-right-"):
+            index = int(widget_id.removeprefix("spinner-wing-right-"))
+            self._wings[index][1] = event.value
+        else:
+            return
+
+        self._update_preview()
+        self._post_changed()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        button_id = event.button.id or ""
+        if button_id == "spinner-wing-add":
+            self._wings.append(["", ""])
+            self.refresh(recompose=True)
+            self._post_changed()
+            return
+
+        if not button_id.startswith("spinner-wing-delete-"):
+            return
+
+        index = int(button_id.removeprefix("spinner-wing-delete-"))
+        if 0 <= index < len(self._wings):
+            del self._wings[index]
+            self.refresh(recompose=True)
+            self._post_changed()
 
 
 class SaveAsScreen(ModalScreen[str | None]):
@@ -566,7 +814,7 @@ class SkinwalkerApp(App[None]):
         height: 10;
     }
 
-    #spinner-waiting, #spinner-thinking, #spinner-verbs, #spinner-wings {
+    #spinner-waiting, #spinner-thinking, #spinner-verbs {
         height: 6;
     }
 
@@ -627,7 +875,11 @@ class SkinwalkerApp(App[None]):
     def __init__(self, hermes_root: str | Path | None = None) -> None:
         super().__init__()
         self.bridge = HermesBridge(hermes_root=hermes_root)
-        self.default_skin = self.bridge.load_skin("default", source="builtin")
+        self.default_skin = (
+            self.bridge.load_skin("default", source="builtin")
+            if "default" in self.bridge.builtin_names
+            else blank_skin("default")
+        )
         self.ai_backends = discover_backends() or ["hermes"]
         self.library_entries: list[LibraryEntry] = []
         self.current_source = "user"
@@ -639,6 +891,10 @@ class SkinwalkerApp(App[None]):
         self._emoji_target_id = ""
         self._history = DraftHistory()
         self._restoring_history = False
+        self._preview_show_logo: bool = True
+        self._preview_show_hero: bool = True
+        self._preview_compact: bool = False
+        self._preview_native: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -650,12 +906,14 @@ class SkinwalkerApp(App[None]):
                     yield Button("New", id="new")
                     yield Button("Clone", id="clone")
                     yield Button("Refresh", id="refresh")
+                with Horizontal(classes="button-row"):
+                    yield Button("Fork Built-in", id="fork-builtin")
                     yield Button("Delete", id="delete")
             with Vertical(id="center-pane"):
                 with Horizontal(classes="button-row"):
                     yield Button("Save", id="save")
                     yield Button("Save As", id="save-as")
-                    yield Button("Activate", id="activate")
+                    yield Button("Activate in Hermes", id="activate")
                     yield Button("Undo", id="undo")
                     yield Button("Redo", id="redo")
                     yield Select(
@@ -667,6 +925,11 @@ class SkinwalkerApp(App[None]):
                     yield Button("Emoji", id="pick-emoji")
                     yield Button("Logo", id="generate-logo")
                     yield Button("Hero", id="generate-hero")
+                with Horizontal(classes="button-row"):
+                    yield Button("Logo: on", id="toggle-logo", classes="tiny-button")
+                    yield Button("Hero: on", id="toggle-hero", classes="tiny-button")
+                    yield Button("Compact: off", id="toggle-compact", classes="tiny-button")
+                    yield Button("Native colors: off", id="toggle-native", classes="tiny-button")
                 with TabbedContent(initial="preview-tab"):
                     with TabPane("Preview", id="preview-tab"):
                         yield Static(id="preview")
@@ -751,8 +1014,9 @@ class SkinwalkerApp(App[None]):
                         with VerticalScroll(classes="editor-scroll"):
                             yield Static("Spinner", classes="section-title")
                             yield Static("Preset shelf", classes="field-label")
-                            yield Select(_select_options(sorted(SPINNER_PRESETS)), id="spinner-preset", allow_blank=False, value="default")
                             with Horizontal(classes="button-row"):
+                                yield Select(_select_options(sorted(SPINNER_PRESETS)), id="spinner-preset", allow_blank=False, value="default")
+                                yield Button("Preview Spinner", id="preview-spinner")
                                 yield Button("Apply Spinner Preset", id="apply-spinner-preset")
                             yield Static("Waiting faces", classes="field-label")
                             yield TextArea("", id="spinner-waiting")
@@ -760,8 +1024,8 @@ class SkinwalkerApp(App[None]):
                             yield TextArea("", id="spinner-thinking")
                             yield Static("Thinking verbs", classes="field-label")
                             yield TextArea("", id="spinner-verbs")
-                            yield Static("Wings (left | right)", classes="field-label")
-                            yield TextArea("", id="spinner-wings")
+                            yield Static("Wing pairs", classes="field-label")
+                            yield WingPairEditor(id="spinner-wings")
                     with TabPane("Art", id="art-tab"):
                         with VerticalScroll(classes="editor-scroll"):
                             yield Static("Logo Generator", classes="section-title")
@@ -860,6 +1124,8 @@ class SkinwalkerApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
+        self._populate_form_from_draft()
+        self._refresh_preview()
         self.action_refresh_library()
         self._refresh_profile_targets()
         self._refresh_ai_backend_note()
@@ -878,6 +1144,13 @@ class SkinwalkerApp(App[None]):
     def _selected_ai_backend(self) -> str:
         return str(self.query_one("#ai-backend", Select).value or self.ai_backends[0])
 
+    def _toast(self, text: str) -> None:
+        try:
+            self.notify(text)
+        except Exception:
+            pass
+        self._set_status(text)
+
     def _ai_direction(self) -> str:
         return self.query_one("#ai-direction", TextArea).text.strip()
 
@@ -893,6 +1166,20 @@ class SkinwalkerApp(App[None]):
         profiles = self.bridge.list_profiles()
         widget.set_options(_select_options(profiles))
         widget.value = current if current in profiles else profiles[0]
+
+    def _update_action_buttons(self) -> None:
+        activate_button = self.query_one("#activate", Button)
+        fork_button = self.query_one("#fork-builtin", Button)
+
+        try:
+            sanitize_skin_name(str(self.draft.get("name", "")).strip())
+        except Exception:
+            activate_button.disabled = True
+        else:
+            activate_button.disabled = False
+
+        fork_button.display = self.current_source == "builtin"
+        fork_button.disabled = self.current_source != "builtin"
 
     def _draft_modified_count(self) -> int:
         count = 0
@@ -1106,7 +1393,7 @@ class SkinwalkerApp(App[None]):
             self.query_one("#spinner-verbs", TextArea).load_text(format_multiline_list(verbs))
         if wings:
             self.draft["spinner"]["wings"] = wings
-            self.query_one("#spinner-wings", TextArea).load_text(format_wings_text(wings))
+            self.query_one("#spinner-wings", WingPairEditor).set_wings(wings)
 
         self.dirty = True
         self._refresh_preview()
@@ -1157,6 +1444,8 @@ class SkinwalkerApp(App[None]):
         widget_id = getattr(focused, "id", "") or ""
         if not widget_id:
             return ""
+        if widget_id.startswith(WING_INPUT_PREFIXES):
+            return widget_id
         if widget_id.startswith("tool-"):
             return widget_id
         if widget_id in EMOJI_ENABLED_FIELDS:
@@ -1165,6 +1454,10 @@ class SkinwalkerApp(App[None]):
 
     def _insert_symbol(self, widget_id: str, token: str) -> None:
         if not token:
+            return
+        if widget_id.startswith(WING_INPUT_PREFIXES):
+            widget = self.query_one(f"#{widget_id}", Input)
+            widget.insert_text_at_cursor(token)
             return
         if widget_id in INPUT_TO_DRAFT or widget_id in INPUT_DEFAULTS or widget_id == "logo-title":
             widget = self.query_one(f"#{widget_id}", Input)
@@ -1213,11 +1506,24 @@ class SkinwalkerApp(App[None]):
         return ""
 
     def _reset_widget_value(self, widget_id: str) -> bool:
+        if widget_id.startswith("spinner-wing-left-") or widget_id.startswith("spinner-wing-right-"):
+            index = int(widget_id.rsplit("-", 1)[-1])
+            side = 0 if "-left-" in widget_id else 1
+            reference_wings = (self.reference_draft.get("spinner") or {}).get("wings", [])
+            value = ""
+            if index < len(reference_wings) and len(reference_wings[index]) == 2:
+                value = str(reference_wings[index][side])
+            self.query_one(f"#{widget_id}", Input).value = value
+            return True
         if widget_id in INPUT_TO_DRAFT:
             self.query_one(f"#{widget_id}", Input).value = self._draft_value_for_widget(widget_id, self.reference_draft)
             return True
         if widget_id in TEXTAREA_TO_DRAFT:
-            self.query_one(f"#{widget_id}", TextArea).load_text(self._draft_value_for_widget(widget_id, self.reference_draft))
+            if widget_id == "spinner-wings":
+                reference_wings = (self.reference_draft.get("spinner") or {}).get("wings", [])
+                self.query_one("#spinner-wings", WingPairEditor).set_wings(reference_wings)
+            else:
+                self.query_one(f"#{widget_id}", TextArea).load_text(self._draft_value_for_widget(widget_id, self.reference_draft))
             return True
         if widget_id in SELECT_DEFAULTS:
             self.query_one(f"#{widget_id}", Select).value = self._control_default_value(widget_id)
@@ -1231,11 +1537,17 @@ class SkinwalkerApp(App[None]):
         return False
 
     def _clear_widget_value(self, widget_id: str) -> bool:
+        if widget_id.startswith("spinner-wing-left-") or widget_id.startswith("spinner-wing-right-"):
+            self.query_one(f"#{widget_id}", Input).value = ""
+            return True
         if widget_id in INPUT_TO_DRAFT or widget_id in INPUT_DEFAULTS or widget_id == "logo-title":
             self.query_one(f"#{widget_id}", Input).value = ""
             return True
         if widget_id in TEXTAREA_TO_DRAFT or widget_id in TEXTAREA_DEFAULTS:
-            self.query_one(f"#{widget_id}", TextArea).load_text("")
+            if widget_id == "spinner-wings":
+                self.query_one("#spinner-wings", WingPairEditor).set_wings([])
+            else:
+                self.query_one(f"#{widget_id}", TextArea).load_text("")
             return True
         if widget_id in SELECT_DEFAULTS:
             self.query_one(f"#{widget_id}", Select).value = self._control_default_value(widget_id)
@@ -1244,11 +1556,15 @@ class SkinwalkerApp(App[None]):
 
     def _select_widget_value(self, widget_id: str) -> bool:
         try:
+            if widget_id.startswith("spinner-wing-left-") or widget_id.startswith("spinner-wing-right-"):
+                self.query_one(f"#{widget_id}", Input).select_all()
+                return True
             if widget_id in INPUT_TO_DRAFT or widget_id in INPUT_DEFAULTS or widget_id == "logo-title":
                 self.query_one(f"#{widget_id}", Input).select_all()
                 return True
             if widget_id in TEXTAREA_TO_DRAFT or widget_id in TEXTAREA_DEFAULTS:
-                self.query_one(f"#{widget_id}", TextArea).select_all()
+                if widget_id != "spinner-wings":
+                    self.query_one(f"#{widget_id}", TextArea).select_all()
                 return True
         except Exception:
             return False
@@ -1297,6 +1613,27 @@ class SkinwalkerApp(App[None]):
         target_name = selected_name or self.current_name or active
         index = next((i for i, entry in enumerate(self.library_entries) if entry.name == target_name), 0)
         widget.highlighted = index
+
+    def _try_load_active_skin(self, *, profile: str | None = None) -> bool:
+        if not self.bridge.available:
+            return False
+
+        try:
+            skin, source = self.bridge.load_active_skin(profile=profile)
+        except Exception:
+            return False
+
+        self.current_source = source
+        self.current_name = str(skin.get("name", "")).strip()
+        self.draft = skin
+        self._snapshot_reference_draft()
+        self.dirty = False
+        self._populate_form_from_draft()
+        self._refresh_preview()
+        self._refresh_library_widget(selected_name=self.current_name)
+        self._reset_history(f"Load {self.current_name}")
+        self._set_status(f"loaded active skin: {self.current_name}")
+        return True
 
     def _load_entry(self, entry: LibraryEntry) -> None:
         self.current_source = entry.source
@@ -1356,7 +1693,7 @@ class SkinwalkerApp(App[None]):
         set_textarea("spinner-waiting", format_multiline_list(spinner.get("waiting_faces", [])))
         set_textarea("spinner-thinking", format_multiline_list(spinner.get("thinking_faces", [])))
         set_textarea("spinner-verbs", format_multiline_list(spinner.get("thinking_verbs", [])))
-        set_textarea("spinner-wings", format_wings_text(spinner.get("wings", [])))
+        self.query_one("#spinner-wings", WingPairEditor).set_wings(spinner.get("wings", []))
 
         tool_emojis = draft.get("tool_emojis", {})
         for tool_key in TOOL_EMOJI_KEYS:
@@ -1394,6 +1731,7 @@ class SkinwalkerApp(App[None]):
         self._refresh_ai_backend_note()
         self._refresh_logo_font_browser()
         self._sync_modified_indicators()
+        self._update_action_buttons()
         self._update_meta()
 
     def _refresh_preview(self) -> None:
@@ -1401,7 +1739,13 @@ class SkinwalkerApp(App[None]):
         preview_error: str | None = None
 
         try:
-            preview_renderable = render_skin_preview(preview_skin)
+            preview_renderable = render_skin_preview(
+                preview_skin,
+                show_logo=self._preview_show_logo,
+                show_hero=self._preview_show_hero,
+                compact=self._preview_compact,
+                native_colors=self._preview_native,
+            )
         except Exception as exc:
             preview_renderable = render_skin_preview(self.default_skin)
             preview_error = str(exc)
@@ -1423,6 +1767,7 @@ class SkinwalkerApp(App[None]):
         self.query_one("#yaml-view", TextArea).load_text(yaml_text)
         self._refresh_logo_font_preview()
         self._sync_modified_indicators()
+        self._update_action_buttons()
         self._update_meta()
         if preview_error:
             self._set_status(f"Preview recovered from invalid draft state: {preview_error}")
@@ -1458,11 +1803,7 @@ class SkinwalkerApp(App[None]):
             self.draft.setdefault("spinner", {})
             self.draft["spinner"][key] = parsed
         elif section == "spinner_wings":
-            parsed = parse_wings_text(value)
-            if self.draft.setdefault("spinner", {}).get(key, []) == parsed:
-                return
-            self.draft.setdefault("spinner", {})
-            self.draft["spinner"][key] = parsed
+            return
         else:
             if self.draft.get(section, "") == value:
                 return
@@ -1612,10 +1953,12 @@ class SkinwalkerApp(App[None]):
     def _activate_current_skin(self) -> None:
         target_profile = self._selected_profile_target()
         try:
-            self.bridge.activate_skin(self.draft["name"], profile=target_profile)
-            self._refresh_library_widget(selected_name=self.draft["name"])
+            active_name = sanitize_skin_name(str(self.draft.get("name", "")).strip())
+            self.bridge.set_active_skin_in_config(active_name, profile=target_profile)
+            self._refresh_library_widget(selected_name=active_name)
             self._update_meta()
-            self._set_status(f"Activated {self.draft['name']} for profile {target_profile}")
+            profile_label = f"{target_profile} profile" if target_profile != "default" else "default profile"
+            self._toast(f"✓ {active_name} activated in hermes ({profile_label})")
         except Exception as exc:
             self._set_status(f"Activate failed: {exc}")
 
@@ -1870,7 +2213,7 @@ class SkinwalkerApp(App[None]):
                     changed = True
                 if wings:
                     self.draft["spinner"]["wings"] = wings
-                    self.query_one("#spinner-wings", TextArea).load_text(format_wings_text(wings))
+                    self.query_one("#spinner-wings", WingPairEditor).set_wings(wings)
                     changed = True
 
             logo_title = str(logo.get("title", "")).strip()
@@ -1988,6 +2331,17 @@ class SkinwalkerApp(App[None]):
             self._sync_modified_indicators()
             self._record_history(f"Select {event.select.id}")
 
+    def on_wing_pair_editor_changed(self, event: WingPairEditor.Changed) -> None:
+        if self._populating_form or self._restoring_history:
+            return
+        if self.draft.setdefault("spinner", {}).get("wings", []) == event.wings:
+            return
+        self.draft.setdefault("spinner", {})
+        self.draft["spinner"]["wings"] = event.wings
+        self.dirty = True
+        self._refresh_preview()
+        self._record_history("Edit spinner-wings")
+
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if self._populating_form or self._restoring_history or not event.text_area.id:
             return
@@ -2022,6 +2376,8 @@ class SkinwalkerApp(App[None]):
             self.action_clone_skin()
         elif button_id == "refresh":
             self.action_refresh_library()
+        elif button_id == "fork-builtin":
+            self.action_fork_builtin()
         elif button_id == "delete":
             self.action_delete_skin()
         elif button_id == "apply-palette":
@@ -2046,6 +2402,8 @@ class SkinwalkerApp(App[None]):
             self._adjust_target_color(saturation_shift=0.08)
         elif button_id == "color-saturate-down":
             self._adjust_target_color(saturation_shift=-0.08)
+        elif button_id == "preview-spinner":
+            self.action_preview_spinner()
         elif button_id == "apply-spinner-preset":
             self.action_apply_spinner_preset()
         elif button_id == "import-yaml-text":
@@ -2100,6 +2458,26 @@ class SkinwalkerApp(App[None]):
             self.action_generate_ai_hero()
         elif button_id == "ai-bundle":
             self.action_generate_ai_bundle()
+        elif button_id == "toggle-logo":
+            self._preview_show_logo = not self._preview_show_logo
+            label = "Logo: on" if self._preview_show_logo else "Logo: off"
+            self.query_one("#toggle-logo", Button).label = label
+            self._refresh_preview()
+        elif button_id == "toggle-hero":
+            self._preview_show_hero = not self._preview_show_hero
+            label = "Hero: on" if self._preview_show_hero else "Hero: off"
+            self.query_one("#toggle-hero", Button).label = label
+            self._refresh_preview()
+        elif button_id == "toggle-compact":
+            self._preview_compact = not self._preview_compact
+            label = "Compact: on" if self._preview_compact else "Compact: off"
+            self.query_one("#toggle-compact", Button).label = label
+            self._refresh_preview()
+        elif button_id == "toggle-native":
+            self._preview_native = not self._preview_native
+            label = "Native colors: on" if self._preview_native else "Native colors: off"
+            self.query_one("#toggle-native", Button).label = label
+            self._refresh_preview()
 
     def action_undo(self) -> None:
         entry = self._history.undo()
@@ -2143,10 +2521,9 @@ class SkinwalkerApp(App[None]):
     def action_refresh_library(self) -> None:
         self._refresh_profile_targets()
         self._refresh_library_widget(selected_name=self.current_name or self.bridge.get_active_skin_name())
-        if not self.current_name and self.library_entries:
-            active = self.bridge.get_active_skin_name()
-            entry = next((entry for entry in self.library_entries if entry.name == active), self.library_entries[0])
-            self._load_entry(entry)
+        if not self.current_name:
+            if not self._try_load_active_skin(profile=self.bridge.current_profile_name()):
+                self._update_meta()
         else:
             self._update_meta()
 
@@ -2200,6 +2577,36 @@ class SkinwalkerApp(App[None]):
                 self._open_save_as_screen(after_save=self._activate_current_skin)
         else:
             self._activate_current_skin()
+
+    def action_preview_spinner(self) -> None:
+        self.push_screen(PreviewSpinnerModal(self.draft))
+
+    def action_fork_builtin(self) -> None:
+        if self.current_source != "builtin":
+            self._set_status("Only built-in skins can be forked")
+            return
+
+        original_name = str(self.draft.get("name", "")).strip() or "custom-skin"
+        forked = deepcopy(self.draft)
+        forked_name = unique_skin_name(self._existing_names(), f"{original_name}-custom")
+        forked["name"] = forked_name
+
+        try:
+            self.bridge.save_skin(forked)
+        except Exception as exc:
+            self._set_status(f"Fork failed: {exc}")
+            return
+
+        self.current_source = "user"
+        self.current_name = forked_name
+        self.draft = forked
+        self._snapshot_reference_draft()
+        self.dirty = False
+        self._populate_form_from_draft()
+        self._refresh_library_widget(selected_name=forked_name)
+        self._refresh_preview()
+        self._reset_history(f"Fork {forked_name}")
+        self._toast(f"forked '{original_name}' -> '{forked_name}'")
 
     def action_delete_skin(self) -> None:
         if self.current_source == "builtin":
