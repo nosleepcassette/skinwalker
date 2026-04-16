@@ -4,7 +4,7 @@ from rich.console import Group
 from rich.panel import Panel
 from rich.text import Text
 
-from .model import COLOR_KEYS, TOOL_EMOJI_KEYS, normalize_color_token
+from .model import COLOR_KEY_LABELS, COLOR_KEYS, TOOL_EMOJI_KEYS, normalize_color_token
 
 
 def _render_markup_block(markup: str, fallback_style: str = "") -> Text:
@@ -45,10 +45,15 @@ def render_skin_preview(
         response_border = normalize_color_token(colors.get("response_border", "#60A5FA"), "#60A5FA")
         ui_label = normalize_color_token(colors.get("ui_label", accent), accent)
         ui_accent = normalize_color_token(colors.get("ui_accent", accent), accent)
-        logo_color = normalize_color_token(colors.get("banner_title", accent), accent)
+        logo_color = normalize_color_token(
+            colors.get("logo_color") or colors.get("banner_title", accent), accent
+        )
+        hero_color = normalize_color_token(
+            colors.get("hero_color") or colors.get("banner_accent", accent), accent
+        )
 
     logo = _render_markup_block(skin.get("banner_logo", ""), logo_color)
-    hero = _render_markup_block(skin.get("banner_hero", ""), accent)
+    hero = _render_markup_block(skin.get("banner_hero", ""), hero_color if not native_colors else "")
 
     waiting_faces = spinner.get("waiting_faces") or ["◐"]
     thinking_faces = spinner.get("thinking_faces") or waiting_faces
@@ -161,9 +166,10 @@ def render_color_preview(colors: dict) -> Group:
     lines = []
     for key in COLOR_KEYS:
         color = normalize_color_token(colors.get(key, ""), "#8EA3FF")
+        label = COLOR_KEY_LABELS.get(key, key)
         lines.append(
             Text.assemble(
-                (f"{key:<16} ", "bold"),
+                (f"{label:<18} ", "bold"),
                 (color.ljust(10), color),
                 ("  ", ""),
                 ("█████", color),

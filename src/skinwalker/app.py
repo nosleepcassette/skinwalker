@@ -35,6 +35,7 @@ from .fonts import FONT_CATEGORIES, filter_fonts, font_meta
 from .hermes import HermesBridge, LibraryEntry
 from .history import DraftHistory
 from .model import (
+    COLOR_KEY_LABELS,
     COLOR_KEYS,
     COLOR_PRESETS,
     FIT_MODE_OPTIONS,
@@ -993,7 +994,12 @@ class SkinwalkerApp(App[None]):
                             yield Static("Import colorscheme text", classes="field-label")
                             yield TextArea("", id="palette-import")
                             yield Static("Color tool target", classes="field-label")
-                            yield Select(_select_options(COLOR_KEYS), id="color-target", allow_blank=False, value="banner_border")
+                            yield Select(
+                                [(COLOR_KEY_LABELS.get(k, k), k) for k in COLOR_KEYS],
+                                id="color-target",
+                                allow_blank=False,
+                                value="banner_border",
+                            )
                             yield Static("Color tool value", classes="field-label")
                             yield Input(id="color-tool-value", placeholder="#8EA3FF")
                             with Horizontal(classes="button-row"):
@@ -1007,8 +1013,14 @@ class SkinwalkerApp(App[None]):
                             with Horizontal(classes="button-row"):
                                 yield Button("Saturate+", id="color-saturate-up")
                                 yield Button("Saturate-", id="color-saturate-down")
+                            yield Static("Preview options", classes="section-title")
+                            with Horizontal(classes="button-row"):
+                                yield Button("Logo: on", id="colors-toggle-logo", classes="tiny-button")
+                                yield Button("Hero: on", id="colors-toggle-hero", classes="tiny-button")
+                                yield Button("Compact: off", id="colors-toggle-compact", classes="tiny-button")
+                                yield Button("Native colors: off", id="colors-toggle-native", classes="tiny-button")
                             for color_key in COLOR_KEYS:
-                                yield Static(color_key, classes="field-label")
+                                yield Static(COLOR_KEY_LABELS.get(color_key, color_key), classes="field-label")
                                 yield Input(id=f"color-{color_key}", placeholder="#RRGGBB")
                     with TabPane("Spinner", id="spinner-tab"):
                         with VerticalScroll(classes="editor-scroll"):
@@ -1821,10 +1833,14 @@ class SkinwalkerApp(App[None]):
         self._record_history(f"Update {field_name}")
 
     def _logo_color(self) -> str:
-        return normalize_color_token(self.draft.get("colors", {}).get("banner_title", "#8EA3FF"), "#8EA3FF")
+        colors = self.draft.get("colors", {})
+        val = colors.get("logo_color") or colors.get("banner_title", "#8EA3FF")
+        return normalize_color_token(val, "#8EA3FF")
 
     def _hero_color(self) -> str:
-        return normalize_color_token(self.draft.get("colors", {}).get("banner_accent", "#8EA3FF"), "#8EA3FF")
+        colors = self.draft.get("colors", {})
+        val = colors.get("hero_color") or colors.get("banner_accent", "#8EA3FF")
+        return normalize_color_token(val, "#8EA3FF")
 
     def _can_save_directly(self) -> bool:
         name = str(self.draft.get("name", "")).strip()
@@ -2477,6 +2493,30 @@ class SkinwalkerApp(App[None]):
             self._preview_native = not self._preview_native
             label = "Native colors: on" if self._preview_native else "Native colors: off"
             self.query_one("#toggle-native", Button).label = label
+            self._refresh_preview()
+        elif button_id == "colors-toggle-logo":
+            self._preview_show_logo = not self._preview_show_logo
+            label = "Logo: on" if self._preview_show_logo else "Logo: off"
+            self.query_one("#toggle-logo", Button).label = label
+            self.query_one("#colors-toggle-logo", Button).label = label
+            self._refresh_preview()
+        elif button_id == "colors-toggle-hero":
+            self._preview_show_hero = not self._preview_show_hero
+            label = "Hero: on" if self._preview_show_hero else "Hero: off"
+            self.query_one("#toggle-hero", Button).label = label
+            self.query_one("#colors-toggle-hero", Button).label = label
+            self._refresh_preview()
+        elif button_id == "colors-toggle-compact":
+            self._preview_compact = not self._preview_compact
+            label = "Compact: on" if self._preview_compact else "Compact: off"
+            self.query_one("#toggle-compact", Button).label = label
+            self.query_one("#colors-toggle-compact", Button).label = label
+            self._refresh_preview()
+        elif button_id == "colors-toggle-native":
+            self._preview_native = not self._preview_native
+            label = "Native colors: on" if self._preview_native else "Native colors: off"
+            self.query_one("#toggle-native", Button).label = label
+            self.query_one("#colors-toggle-native", Button).label = label
             self._refresh_preview()
 
     def action_undo(self) -> None:

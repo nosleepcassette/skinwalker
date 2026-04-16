@@ -16,6 +16,8 @@ COLOR_KEYS = [
     "banner_accent",
     "banner_dim",
     "banner_text",
+    "logo_color",
+    "hero_color",
     "ui_accent",
     "ui_label",
     "ui_ok",
@@ -27,6 +29,26 @@ COLOR_KEYS = [
     "session_label",
     "session_border",
 ]
+
+COLOR_KEY_LABELS: dict[str, str] = {
+    "banner_border": "Banner border",
+    "banner_title": "Banner title",
+    "banner_accent": "Banner accent",
+    "banner_dim": "Dim text",
+    "banner_text": "Body text",
+    "logo_color": "Logo color",
+    "hero_color": "Hero color",
+    "ui_accent": "UI accent",
+    "ui_label": "UI label",
+    "ui_ok": "Success",
+    "ui_error": "Error",
+    "ui_warn": "Warning",
+    "prompt": "Prompt",
+    "input_rule": "Input rule",
+    "response_border": "Response border",
+    "session_label": "Session label",
+    "session_border": "Session border",
+}
 
 BRANDING_KEYS = [
     "agent_name",
@@ -83,6 +105,8 @@ COLOR_PRESETS = {
         "input_rule": "#CD7F32",
         "response_border": "#FFD700",
         "session_label": "#DAA520",
+        "logo_color": "#FFD700",
+        "hero_color": "#FFBF00",
         "session_border": "#8B8682",
     },
     "slate": {
@@ -100,6 +124,8 @@ COLOR_PRESETS = {
         "input_rule": "#4C6FFF",
         "response_border": "#60A5FA",
         "session_label": "#93C5FD",
+        "logo_color": "#DCE6FF",
+        "hero_color": "#7DD3FC",
         "session_border": "#475569",
     },
     "mono": {
@@ -117,6 +143,8 @@ COLOR_PRESETS = {
         "input_rule": "#555555",
         "response_border": "#888888",
         "session_label": "#AAAAAA",
+        "logo_color": "#E6EDF3",
+        "hero_color": "#AAAAAA",
         "session_border": "#555555",
     },
     "ember": {
@@ -134,6 +162,8 @@ COLOR_PRESETS = {
         "input_rule": "#A33A22",
         "response_border": "#FF9A62",
         "session_label": "#FFB86B",
+        "logo_color": "#FFD6A5",
+        "hero_color": "#FF7A59",
         "session_border": "#7A4A3A",
     },
     "ocean": {
@@ -151,6 +181,8 @@ COLOR_PRESETS = {
         "input_rule": "#0E7490",
         "response_border": "#38BDF8",
         "session_label": "#67E8F9",
+        "logo_color": "#CCFBF1",
+        "hero_color": "#5EEAD4",
         "session_border": "#25637A",
     },
     "forest": {
@@ -168,6 +200,8 @@ COLOR_PRESETS = {
         "input_rule": "#2F6B3B",
         "response_border": "#84CC16",
         "session_label": "#BEF264",
+        "logo_color": "#E7F7D4",
+        "hero_color": "#A3E635",
         "session_border": "#56754E",
     },
     "amber-phosphor": {
@@ -185,6 +219,8 @@ COLOR_PRESETS = {
         "input_rule": "#71450B",
         "response_border": "#D58B1D",
         "session_label": "#E8B95C",
+        "logo_color": "#FFD36B",
+        "hero_color": "#FFB347",
         "session_border": "#55350A",
     },
     "amber-cathode": {
@@ -202,6 +238,8 @@ COLOR_PRESETS = {
         "input_rule": "#5E3904",
         "response_border": "#C97A0A",
         "session_label": "#D9A54A",
+        "logo_color": "#FFC65C",
+        "hero_color": "#FFAE1A",
         "session_border": "#462A05",
     },
     "matrix": {
@@ -219,6 +257,8 @@ COLOR_PRESETS = {
         "input_rule": "#0F5F1A",
         "response_border": "#33CC33",
         "session_label": "#7DFF8D",
+        "logo_color": "#8AFF6E",
+        "hero_color": "#39FF14",
         "session_border": "#145F20",
     },
     "nord": {
@@ -236,6 +276,8 @@ COLOR_PRESETS = {
         "input_rule": "#5E81AC",
         "response_border": "#81A1C1",
         "session_label": "#88C0D0",
+        "logo_color": "#ECEFF4",
+        "hero_color": "#88C0D0",
         "session_border": "#3B4252",
     },
     "dracula": {
@@ -253,6 +295,8 @@ COLOR_PRESETS = {
         "input_rule": "#BD93F9",
         "response_border": "#FF79C6",
         "session_label": "#8BE9FD",
+        "logo_color": "#F8F8F2",
+        "hero_color": "#FF79C6",
         "session_border": "#44475A",
     },
     "catppuccin": {
@@ -270,6 +314,8 @@ COLOR_PRESETS = {
         "input_rule": "#89B4FA",
         "response_border": "#CBA6F7",
         "session_label": "#89DCEB",
+        "logo_color": "#CDD6F4",
+        "hero_color": "#CBA6F7",
         "session_border": "#313244",
     },
     "solarized-dark": {
@@ -287,6 +333,8 @@ COLOR_PRESETS = {
         "input_rule": "#268BD2",
         "response_border": "#2AA198",
         "session_label": "#657B83",
+        "logo_color": "#FDF6E3",
+        "hero_color": "#2AA198",
         "session_border": "#073642",
     },
     "gruvbox": {
@@ -304,6 +352,8 @@ COLOR_PRESETS = {
         "input_rule": "#458588",
         "response_border": "#D3869B",
         "session_label": "#A89984",
+        "logo_color": "#EBDBB2",
+        "hero_color": "#FABD2F",
         "session_border": "#3C3836",
     },
     "tokyo-night": {
@@ -321,6 +371,8 @@ COLOR_PRESETS = {
         "input_rule": "#7AA2F7",
         "response_border": "#BB9AF7",
         "session_label": "#565F89",
+        "logo_color": "#C0CAF5",
+        "hero_color": "#BB9AF7",
         "session_border": "#24283B",
     },
     "one-dark": {
@@ -338,6 +390,8 @@ COLOR_PRESETS = {
         "input_rule": "#61AFEF",
         "response_border": "#C678DD",
         "session_label": "#828997",
+        "logo_color": "#ABB2BF",
+        "hero_color": "#C678DD",
         "session_border": "#3E4451",
     },
     "monokai": {
@@ -355,6 +409,8 @@ COLOR_PRESETS = {
         "input_rule": "#AE81FF",
         "response_border": "#66D9E8",
         "session_label": "#75715E",
+        "logo_color": "#F8F8F2",
+        "hero_color": "#AE81FF",
         "session_border": "#3E3D32",
     },
     "rose-pine": {
@@ -372,6 +428,8 @@ COLOR_PRESETS = {
         "input_rule": "#C4A7E7",
         "response_border": "#EBBCBA",
         "session_label": "#908CAA",
+        "logo_color": "#E0DEF4",
+        "hero_color": "#C4A7E7",
         "session_border": "#1F1D2E",
     },
     "kanagawa": {
@@ -389,6 +447,8 @@ COLOR_PRESETS = {
         "input_rule": "#7E9CD8",
         "response_border": "#957FB8",
         "session_label": "#727169",
+        "logo_color": "#DCD7BA",
+        "hero_color": "#957FB8",
         "session_border": "#2A2A37",
     },
     "everforest": {
@@ -406,6 +466,8 @@ COLOR_PRESETS = {
         "input_rule": "#7FBBB3",
         "response_border": "#D699B6",
         "session_label": "#859289",
+        "logo_color": "#D3C6AA",
+        "hero_color": "#A7C080",
         "session_border": "#323D43",
     },
     "synthwave": {
@@ -423,6 +485,8 @@ COLOR_PRESETS = {
         "input_rule": "#FF7EDB",
         "response_border": "#72F1B8",
         "session_label": "#B893CE",
+        "logo_color": "#FFFFFF",
+        "hero_color": "#72F1B8",
         "session_border": "#2B213A",
     },
     "material": {
@@ -440,6 +504,8 @@ COLOR_PRESETS = {
         "input_rule": "#82AAFF",
         "response_border": "#C792EA",
         "session_label": "#676E95",
+        "logo_color": "#A6ACCD",
+        "hero_color": "#C792EA",
         "session_border": "#34394F",
     },
     "ayu-dark": {
@@ -457,6 +523,8 @@ COLOR_PRESETS = {
         "input_rule": "#59C2FF",
         "response_border": "#D2A6FF",
         "session_label": "#626A73",
+        "logo_color": "#BFBAB0",
+        "hero_color": "#FFB454",
         "session_border": "#131721",
     },
 }
@@ -574,6 +642,8 @@ def blank_skin(name: str = "custom-skin") -> dict:
             "input_rule": "#8EA3FF",
             "response_border": "#60A5FA",
             "session_label": "#8EA3FF",
+        "logo_color": "#8EA3FF",
+        "hero_color": "#8EA3FF",
             "session_border": "#586789",
         },
         "spinner": {
