@@ -16,6 +16,23 @@ def _render_markup_block(markup: str, fallback_style: str = "") -> Text:
         return Text(markup, style=fallback_style)
 
 
+def _recolor_markup(markup: str, color: str) -> Text:
+    """Extract plain text from markup and apply skin color.
+
+    Art is stored with its generation color baked into Rich markup tags.
+    Text.from_markup() honours those tags and ignores any fallback style,
+    so the preview never reflects color scheme changes. This strips the
+    baked-in color and re-applies the current skin's logo_color/hero_color.
+    """
+    if not markup.strip():
+        return Text("", style=color)
+    try:
+        plain = Text.from_markup(markup).plain
+        return Text(plain, style=color)
+    except Exception:
+        return Text(markup, style=color)
+
+
 def render_skin_preview(
     skin: dict,
     *,
@@ -52,8 +69,12 @@ def render_skin_preview(
             colors.get("hero_color") or colors.get("banner_accent", accent), accent
         )
 
-    logo = _render_markup_block(skin.get("banner_logo", ""), logo_color)
-    hero = _render_markup_block(skin.get("banner_hero", ""), hero_color if not native_colors else "")
+    if native_colors:
+        logo = _render_markup_block(skin.get("banner_logo", ""), "")
+        hero = _render_markup_block(skin.get("banner_hero", ""), "")
+    else:
+        logo = _recolor_markup(skin.get("banner_logo", ""), logo_color)
+        hero = _recolor_markup(skin.get("banner_hero", ""), hero_color)
 
     waiting_faces = spinner.get("waiting_faces") or ["◐"]
     thinking_faces = spinner.get("thinking_faces") or waiting_faces
