@@ -47,8 +47,9 @@ fi
 
 DISPLAY_PY="$HERMES_ROOT/agent/display.py"
 RUN_AGENT_PY="$HERMES_ROOT/run_agent.py"
+CLI_PY="$HERMES_ROOT/cli.py"
 
-for f in "$DISPLAY_PY" "$RUN_AGENT_PY"; do
+for f in "$DISPLAY_PY" "$RUN_AGENT_PY" "$CLI_PY"; do
   if [[ ! -f "$f" ]]; then
     print -P "%F{red}error:%f expected file not found: $f"
     print "is $HERMES_ROOT the correct hermes-agent root?"
@@ -74,7 +75,14 @@ else
   RUN_ALREADY=0
 fi
 
-if (( DISPLAY_ALREADY && RUN_ALREADY )); then
+if grep -q "get_waiting_faces" "$CLI_PY" 2>/dev/null; then
+  print -P "%F{green}✓%f cli.py already patched — skipping"
+  CLI_ALREADY=1
+else
+  CLI_ALREADY=0
+fi
+
+if (( DISPLAY_ALREADY && RUN_ALREADY && CLI_ALREADY )); then
   print -P "%F{green}already fully patched.%f"
   exit 0
 fi
@@ -91,6 +99,11 @@ fi
 if (( ! RUN_ALREADY )); then
   cp "$RUN_AGENT_PY" "${RUN_AGENT_PY}.bak.${TIMESTAMP}"
   print "  backed up run_agent.py → run_agent.py.bak.${TIMESTAMP}"
+fi
+
+if (( ! CLI_ALREADY )); then
+  cp "$CLI_PY" "${CLI_PY}.bak.${TIMESTAMP}"
+  print "  backed up cli.py → cli.py.bak.${TIMESTAMP}"
 fi
 
 # ── patch display.py ──────────────────────────────────────────────────────────
@@ -185,6 +198,37 @@ for old, new in replacements:
 
 open(path, 'w').write(src)
 print(f"  patched run_agent.py ({total} sites updated)")
+PYEOF
+fi
+
+# ── patch cli.py ─────────────────────────────────────────────────────────────
+# injects skin waiting_face into the TUI tool spinner (tool.started handler)
+
+if (( ! CLI_ALREADY )); then
+  python3 - "$CLI_PY" <<'PYEOF'
+import sys
+
+path = sys.argv[1]
+src = open(path).read()
+
+old = '            self._spinner_text = f"{emoji} {label}"\n            self._tool_start_time = _time.monotonic()\n            # Store args for stacked scrollback line on completion'
+new = '''            try:
+                import random as _random
+                from agent.display import KawaiiSpinner as _KS
+                _face = _random.choice(_KS.get_waiting_faces())
+                self._spinner_text = f"{_face} {emoji} {label}"
+            except Exception:
+                self._spinner_text = f"{emoji} {label}"
+            self._tool_start_time = _time.monotonic()
+            # Store args for stacked scrollback line on completion'''
+
+if old not in src:
+    print("error: could not find insertion point in cli.py — may already be patched or upstream changed")
+    sys.exit(1)
+
+patched = src.replace(old, new, 1)
+open(path, 'w').write(patched)
+print("  patched cli.py (TUI waiting_face in tool spinner)")
 PYEOF
 fi
 
