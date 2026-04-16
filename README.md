@@ -4,6 +4,22 @@ Skinwalker is a Textual-based TUI for creating, editing, previewing, and activat
 
 It is aimed at the full Hermes skin surface rather than a toy theme picker. The app reads real built-in skins from Hermes, edits the real skin schema, saves custom skins into the active Hermes home, and previews the result as terminal-native output plus generated YAML.
 
+![cassette-ful skin — identity tab](skinwalker.png)
+
+*cassette-ful skin: ASCII logo, braille hero art, amber palette, identity tab*
+
+![wizard skin](wizard.png)
+
+*wizard skin: phosphor green palette, alternate hero art, spinner fields*
+
+![live spinner preview modal](spinner.png)
+
+*live spinner preview: animates the current draft's faces, verbs, and wings before saving*
+
+![spinner tab — wing pairs editor](maximize.png)
+
+*spinner tab: wing pairs editor, waiting/thinking face lists, thinking verbs*
+
 ## What It Does Today
 
 The current app supports:
@@ -51,8 +67,8 @@ The app now covers the major foundation and workflow gaps from the initial MVP. 
 
 Those upgrades are now spec'd in:
 
-- [ROADMAP.md](/Users/maps/dev/skinwalker/ROADMAP.md)
-- [SKINWALKER_UPGRADE_PLAN.md](/Users/maps/dev/skinwalker/SKINWALKER_UPGRADE_PLAN.md)
+- [ROADMAP.md](ROADMAP.md)
+- [SKINWALKER_UPGRADE_PLAN.md](SKINWALKER_UPGRADE_PLAN.md)
 
 ## Requirements
 
@@ -71,21 +87,56 @@ Skin data is resolved relative to the active Hermes home. In default Hermes usag
 
 ## Installation
 
-```bash
-cd ~/dev/skinwalker
-uv sync
+Clone and run the install script. This uses `uv tool install` to drop `skinwalker` onto your PATH as a standalone command — no need to `uv run` or activate an environment each time.
+
+```zsh
+git clone https://github.com/nosleepcassette/skinwalker
+cd skinwalker
+zsh install.zsh
 ```
 
-## Run
+Requires [uv](https://docs.astral.sh/uv/). If you don't have it:
 
-```bash
-uv run skinwalker
+```zsh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+After install, run from anywhere:
+
+```zsh
+skinwalker
 ```
 
 Useful non-TUI check:
 
-```bash
-uv run skinwalker --dump-active
+```zsh
+skinwalker --dump-active
+```
+
+## Hermes Patch
+
+Skinwalker requires a fix in hermes-agent so that skin `waiting_faces`, `thinking_faces`, and `thinking_verbs` are actually applied at runtime. Without this, Hermes ignores those fields and falls back to hardcoded kawaii faces.
+
+The fix is submitted upstream at [NousResearch/hermes-agent#10668](https://github.com/NousResearch/hermes-agent/pull/10668). While that's under review, apply it locally:
+
+```zsh
+zsh patch-hermes.zsh
+```
+
+The script auto-detects your Hermes install at `~/.hermes/hermes-agent`. To point it elsewhere:
+
+```zsh
+zsh patch-hermes.zsh --hermes-root /path/to/hermes-agent
+# or
+HERMES_AGENT_ROOT=/path/to/hermes-agent zsh patch-hermes.zsh
+```
+
+The patch is idempotent — safe to re-run. Backups of the original files are written alongside them before any changes are made. To revert, restore the `.bak.*` files in `~/.hermes/hermes-agent/agent/`.
+
+You can also run install and patch together:
+
+```zsh
+zsh install.zsh --patch-hermes
 ```
 
 ## Keybindings
@@ -133,38 +184,38 @@ The TUI is organized into three panes:
 
 Core modules:
 
-- [src/skinwalker/app.py](/Users/maps/dev/skinwalker/src/skinwalker/app.py)
+- [src/skinwalker/app.py](src/skinwalker/app.py)
   - Textual app, layout, UI event handling, draft state, save/activate flows
-- [src/skinwalker/hermes.py](/Users/maps/dev/skinwalker/src/skinwalker/hermes.py)
+- [src/skinwalker/hermes.py](src/skinwalker/hermes.py)
   - bridge into Hermes skin/config behavior
-- [src/skinwalker/model.py](/Users/maps/dev/skinwalker/src/skinwalker/model.py)
+- [src/skinwalker/model.py](src/skinwalker/model.py)
   - skin normalization, palette/spinner presets, parsing helpers
-- [src/skinwalker/art.py](/Users/maps/dev/skinwalker/src/skinwalker/art.py)
+- [src/skinwalker/art.py](src/skinwalker/art.py)
   - logo generation, art import, and current hero generation
-- [src/skinwalker/ai.py](/Users/maps/dev/skinwalker/src/skinwalker/ai.py)
+- [src/skinwalker/ai.py](src/skinwalker/ai.py)
   - Hermes/API-backed structured suggestion generation
-- [src/skinwalker/fonts.py](/Users/maps/dev/skinwalker/src/skinwalker/fonts.py)
+- [src/skinwalker/fonts.py](src/skinwalker/fonts.py)
   - font categorization and filtering metadata
-- [src/skinwalker/history.py](/Users/maps/dev/skinwalker/src/skinwalker/history.py)
+- [src/skinwalker/history.py](src/skinwalker/history.py)
   - app-level undo/redo history
-- [src/skinwalker/preview.py](/Users/maps/dev/skinwalker/src/skinwalker/preview.py)
+- [src/skinwalker/preview.py](src/skinwalker/preview.py)
   - terminal-native preview rendering
-- [src/skinwalker/__main__.py](/Users/maps/dev/skinwalker/src/skinwalker/__main__.py)
+- [src/skinwalker/__main__.py](src/skinwalker/__main__.py)
   - CLI entry point
 
 ## Repository Layout
 
-- [src/](/Users/maps/dev/skinwalker/src)
+- [src/](src)
   - Python package
-- [ROADMAP.md](/Users/maps/dev/skinwalker/ROADMAP.md)
+- [ROADMAP.md](ROADMAP.md)
   - high-level phased roadmap
-- [SKINWALKER_UPGRADE_PLAN.md](/Users/maps/dev/skinwalker/SKINWALKER_UPGRADE_PLAN.md)
+- [SKINWALKER_UPGRADE_PLAN.md](SKINWALKER_UPGRADE_PLAN.md)
   - detailed implementation plan
-- [ASCII_TEXT_TUI_SPEC.md](/Users/maps/dev/skinwalker/ASCII_TEXT_TUI_SPEC.md)
+- [ASCII_TEXT_TUI_SPEC.md](ASCII_TEXT_TUI_SPEC.md)
   - local text-to-ASCII tool spec
-- [ASCIIWALKER_STANDALONE_SPEC.md](/Users/maps/dev/skinwalker/ASCIIWALKER_STANDALONE_SPEC.md)
+- [ASCIIWALKER_STANDALONE_SPEC.md](ASCIIWALKER_STANDALONE_SPEC.md)
   - standalone text generator parity plan
-- [IMAGE_TO_ASCII_STANDALONE_SPEC.md](/Users/maps/dev/skinwalker/IMAGE_TO_ASCII_STANDALONE_SPEC.md)
+- [IMAGE_TO_ASCII_STANDALONE_SPEC.md](IMAGE_TO_ASCII_STANDALONE_SPEC.md)
   - standalone and integrated image-to-ASCII plan
 
 ## Known Limitations
